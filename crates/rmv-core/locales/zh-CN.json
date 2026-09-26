@@ -131,6 +131,9 @@
     "history_cleared": "已清除 %{count} 条历史运行记录。",
     "download_done": "%{filename} 下载完成",
     "exploit_running": "提权运行中: %{line}",
-    "exploit_aborted": "提权执行异常"
+    "exploit_aborted": "提权执行异常",
+    "arg_help": "打印帮助信息（使用 '-h' 查看简要说明）",
+    "arg_version": "打印版本信息",
+    "help_subcmd": "打印此说明或指定子命令的帮助信息"
   }
 }

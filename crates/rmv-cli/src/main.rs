@@ -4,7 +4,7 @@ mod commands;
 mod ui;
 
 use std::path::PathBuf;
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Arg, ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use rmv_core::{set_current_language, Language};
 use rust_i18n::t;
 
@@ -103,6 +103,28 @@ fn early_detect_language() -> Language {
 fn localize_command(cmd: clap::Command) -> clap::Command {
     cmd.about(t!("cli.app_about").to_string())
         .long_about(t!("cli.app_long_about").to_string())
+        .disable_help_flag(true)
+        .arg(
+            Arg::new("help")
+                .short('h')
+                .long("help")
+                .action(ArgAction::Help)
+                .global(true)
+                .help(t!("cli.arg_help").to_string()),
+        )
+        .disable_version_flag(true)
+        .arg(
+            Arg::new("version")
+                .short('V')
+                .long("version")
+                .action(ArgAction::Version)
+                .help(t!("cli.arg_version").to_string()),
+        )
+        .disable_help_subcommand(true)
+        .subcommand(
+            clap::Command::new("help")
+                .about(t!("cli.help_subcmd").to_string()),
+        )
         .mut_arg("serial", |a| a.help(t!("cli.arg_serial").to_string()))
         .mut_arg("lang", |a| a.help(t!("cli.arg_lang").to_string()))
         .mut_subcommand("check", |sc| sc.about(t!("cli.check_about").to_string()))
