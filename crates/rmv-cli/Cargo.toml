@@ -1,0 +1,21 @@
+[package]
+name = "rmv"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rmv"
+path = "src/main.rs"
+
+[dependencies]
+rmv-core = { path = "../rmv-core" }
+clap.workspace = true
+indicatif.workspace = true
+colored.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
