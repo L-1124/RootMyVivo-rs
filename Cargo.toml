@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rmv-core",
+    "crates/rmv-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["RootMyVivo-RS Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zenyxx-xd/RootMyVivo"
+
+[workspace.dependencies]
+tokio = { version = "1.43", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+sha2 = "0.10"
+regex = "1.11"
+async-trait = "0.1"
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4.5", features = ["derive", "cargo"] }
+indicatif = { version = "0.17", features = ["tokio"] }
+colored = "3.0"
+anyhow = "1.0"
