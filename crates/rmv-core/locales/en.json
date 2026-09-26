@@ -69,7 +69,10 @@
     "gate_mismatch": "Payload does not contain kernel fingerprint (labels: %{labels})",
     "force_payload_warn": "Forcing deployment despite gate mismatch due to --force-payload",
     "dry_run_done": "dry-run: verification complete, payload to deploy: %{path}",
-    "dry_run_complete_msg": "dry-run complete, no files were deployed to device; payload: %{path}"
+    "dry_run_complete_msg": "dry-run complete, no files were deployed to device; payload: %{path}",
+    "exploit_attached": "Existing exploit process is still probing; attaching to its live log",
+    "exploit_gone": "Exploit process exited without reaching root",
+    "exploit_still_running": "Payload still probing after %{secs}s; it keeps running in background - re-run to attach"
   },
   "cli": {
     "app_about": "RootMyVivo-RS: Unlock-free temporary root & KernelSU orchestrator for vivo/iQOO devices (Rust)",
@@ -134,6 +137,7 @@
     "exploit_aborted": "Exploit execution failed",
     "arg_help": "Print help (see a summary with '-h')",
     "arg_version": "Print version",
-    "help_subcmd": "Print this message or the help of the given subcommand(s)"
+    "help_subcmd": "Print this message or the help of the given subcommand(s)",
+    "arg_timeout": "Privilege escalation wait window in seconds (CFI probing can take minutes)"
   }
 }

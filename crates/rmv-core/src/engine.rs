@@ -32,6 +32,8 @@ pub struct EngineOptions {
     pub dry_run: bool,
     /// PC 本地提供的 KernelSU/SukiSU 管理器 APK 路径（用于免预装就地提取 ksud）。
     pub manager_apk: Option<PathBuf>,
+    /// 提权等待窗口（秒）。CFI 探测最多 24 次且带随机延迟，窗口需覆盖整个探测期。
+    pub timeout_secs: u64,
 }
 
 impl Default for EngineOptions {
@@ -49,6 +51,7 @@ impl Default for EngineOptions {
             payload_dirs: Vec::new(),
             dry_run: false,
             manager_apk: None,
+            timeout_secs: 900,
         }
     }
 }
@@ -316,29 +319,42 @@ impl ExploitEngine {
                 line: t!("log.root_already").to_string(),
             });
         } else {
-            let run_cmd = format!(
-                "cd {} && (RMV_ATTEMPTS='{}' RMV_RETRY_DELAY='{}' LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 &)",
-                remote_dir, options.attempts, options.retry_delay, remote_so
-            );
-            let _ = transport.exec(&run_cmd).await?;
+            // 上一轮客户端超时退出时载荷常仍在探测：此时附加监听，避免重复注入
+            let (_, existing) = transport
+                .exec("grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1")
+                .await?;
+            if existing.contains("/proc/") {
+                let _ = event_tx.send(EngineEvent::Log {
+                    level: LogLevel::Warn,
+                    line: t!("log.exploit_attached").to_string(),
+                });
+            } else {
+                let run_cmd = format!(
+                    "cd {} && (RMV_ATTEMPTS='{}' RMV_RETRY_DELAY='{}' LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 &)",
+                    remote_dir, options.attempts, options.retry_delay, remote_so
+                );
+                let _ = transport.exec(&run_cmd).await?;
+            }
 
-            // 轮询等待 Root 权限达成，等待窗口随尝试轮次伸缩
-            let timeout_limit = 60 + 40 * options.attempts as u64;
+            // CFI 探测单轮最多 24 次且每次带随机延迟，窗口需覆盖整个探测期
+            let timeout_limit = options.timeout_secs;
             let mut elapsed_sec = 0u64;
             let mut last_log_tail = String::new();
             let mut last_attempt: Option<u32> = None;
             let attempt_re = regex::Regex::new(r"rmv exploit attempt (\d+)/(\d+)")
                 .expect("static attempt pattern");
+            let mut payload_alive = false;
 
             while elapsed_sec < timeout_limit {
                 sleep(Duration::from_secs(2)).await;
                 elapsed_sec += 2;
 
-                // 单次往返取回：尾部日志 + 完成哨兵 + su 探针
+                // 单次往返取回：尾部日志 + 完成哨兵 + 进程存活 + su 探针
                 let (_, probe) = transport
                     .exec(
                         "tail -n 15 /data/local/tmp/rmv/live.log 2>/dev/null; \
                          echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE 2>/dev/null; \
+                         echo __RMV_ALIVE__; grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1; \
                          echo __RMV_SU__; su -c id 2>/dev/null; echo __RMV_END__",
                     )
                     .await?;
@@ -351,6 +367,15 @@ impl ExploitEngine {
                     .to_string();
                 let done_part = probe
                     .split("__RMV_DONE__")
+                    .nth(1)
+                    .unwrap_or("")
+                    .split("__RMV_ALIVE__")
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let alive_part = probe
+                    .split("__RMV_ALIVE__")
                     .nth(1)
                     .unwrap_or("")
                     .split("__RMV_SU__")
@@ -385,6 +410,8 @@ impl ExploitEngine {
                     });
                 }
 
+                payload_alive = alive_part.contains("/proc/");
+
                 if su_part.contains("uid=0") {
                     is_rooted = true;
                     break;
@@ -394,9 +421,28 @@ impl ExploitEngine {
                 if !done_part.is_empty() {
                     break;
                 }
+
+                // 载荷进程已退出且无完成哨兵：崩溃或异常中断，无需空等窗口
+                if elapsed_sec >= 6 && !payload_alive {
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Error,
+                        line: t!("log.exploit_gone").to_string(),
+                    });
+                    break;
+                }
             }
 
             if !is_rooted {
+                if payload_alive {
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Warn,
+                        line: t!(
+                            "log.exploit_still_running",
+                            secs = timeout_limit.to_string()
+                        )
+                        .to_string(),
+                    });
+                }
                 let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                 return Err(RmvError::ExploitTimeout {
                     last_attempt,

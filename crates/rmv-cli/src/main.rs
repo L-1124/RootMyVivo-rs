@@ -64,10 +64,11 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
 
-
-
         #[arg(long = "manager-apk", value_name = "APK_PATH")]
         manager_apk: Option<PathBuf>,
+
+        #[arg(long, default_value_t = 900)]
+        timeout: u64,
     },
 
     Clean {
@@ -146,6 +147,7 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                 .mut_arg("payload_dirs", |a| a.help(t!("cli.arg_payload_dir").to_string()))
                 .mut_arg("dry_run", |a| a.help(t!("cli.arg_dry_run").to_string()))
                 .mut_arg("manager_apk", |a| a.help(t!("cli.arg_manager_apk").to_string()))
+                .mut_arg("timeout", |a| a.help(t!("cli.arg_timeout").to_string()))
         })
         .mut_subcommand("clean", |sc| {
             sc.about(t!("cli.clean_about").to_string())
@@ -190,6 +192,7 @@ async fn main() -> anyhow::Result<()> {
             payload_dirs,
             dry_run,
             manager_apk,
+            timeout,
         } => {
             commands::run_exploit(
                 cli.serial,
@@ -205,6 +208,7 @@ async fn main() -> anyhow::Result<()> {
                 payload_dirs,
                 dry_run,
                 manager_apk,
+                timeout,
             )
             .await?
         }

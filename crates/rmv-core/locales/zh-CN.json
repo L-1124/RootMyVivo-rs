@@ -69,7 +69,10 @@
     "gate_mismatch": "载荷未内嵌本机内核指纹，无法自证身份 (标签: %{labels})",
     "force_payload_warn": "已指定 --force-payload，忽略身份闸门继续下发",
     "dry_run_done": "dry-run: 校验完成，将下发的载荷为 %{path}",
-    "dry_run_complete_msg": "dry-run 完成，未向设备下发任何文件；载荷: %{path}"
+    "dry_run_complete_msg": "dry-run 完成，未向设备下发任何文件；载荷: %{path}",
+    "exploit_attached": "检测到已有提权进程仍在探测，改为附加监听其日志",
+    "exploit_gone": "提权进程已退出，未取得 Root",
+    "exploit_still_running": "载荷在 %{secs} 秒后仍在探测；进程继续在后台运行，可重新运行以附加监听"
   },
   "cli": {
     "app_about": "RootMyVivo-RS: vivo/iQOO 免解锁临时提权与 KernelSU 编排工具 (Rust 版)",
@@ -134,6 +137,7 @@
     "exploit_aborted": "提权执行异常",
     "arg_help": "打印帮助信息（使用 '-h' 查看简要说明）",
     "arg_version": "打印版本信息",
-    "help_subcmd": "打印此说明或指定子命令的帮助信息"
+    "help_subcmd": "打印此说明或指定子命令的帮助信息",
+    "arg_timeout": "提权等待窗口秒数（CFI 探测可能持续数分钟）"
   }
 }
