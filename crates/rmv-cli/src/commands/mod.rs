@@ -122,7 +122,6 @@ pub async fn run_exploit(
     dry_run: bool,
     manager_apk: Option<PathBuf>,
     timeout_secs: u64,
-    allow_dirty_boot: bool,
 ) -> Result<()> {
     let transport = AdbCliTransport::resolve(serial).await?;
     let ksu_variant = KsuVariant::from_id(&ksu);
@@ -141,7 +140,6 @@ pub async fn run_exploit(
         dry_run,
         manager_apk,
         timeout_secs,
-        allow_dirty_boot,
     };
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -159,7 +157,8 @@ pub async fn run_exploit(
     let res = engine.run(&transport, options, event_tx).await;
     let _ = ui_handle.await;
 
-    res.context(t!("cli.exploit_aborted"))
+    // 失败的后果与动作已由引擎以 [fail] 行给出，这里只透出精确原因。
+    res.map_err(Into::into)
 }
 
 pub async fn run_clean(serial: Option<String>, deep: bool) -> Result<()> {

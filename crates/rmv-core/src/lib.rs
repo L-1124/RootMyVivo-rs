@@ -6,7 +6,6 @@ pub mod device;
 pub mod engine;
 pub mod error;
 pub mod event;
-pub mod guard;
 pub mod ksu;
 pub mod payload;
 pub mod persistence;
@@ -24,5 +23,4 @@ pub use payload::{find_local_payload, inspect_payload, verify_payload_file, Payl
 pub use persistence::{CleanOutcome, Persistence};
 pub use transport::{AdbCliTransport, Transport};
 pub use history::{HistoryManager, RunRecord};
-pub use guard::{BootVerdict, DirtyBoot};
 pub use i18n::{current_language, set_current_language, Language};

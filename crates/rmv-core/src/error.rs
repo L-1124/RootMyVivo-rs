@@ -86,15 +86,8 @@ impl fmt::Display for RmvError {
                     rust_i18n::t!("error.hash_mismatch", expected = expected, actual = actual)
                 )
             }
-            Self::ExploitTimeout { last_attempt, .. } => {
-                let att = last_attempt
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| "-".to_string());
-                write!(
-                    f,
-                    "{}",
-                    rust_i18n::t!("error.exploit_timeout", last_attempt = att)
-                )
+            Self::ExploitTimeout { .. } => {
+                write!(f, "{}", rust_i18n::t!("error.exploit_timeout"))
             }
             Self::ExploitFailed(s) => {
                 write!(f, "{}", rust_i18n::t!("error.exploit_failed", message = s))

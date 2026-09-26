@@ -95,13 +95,9 @@ impl CliUi {
             EngineEvent::Completed { success, message } => {
                 self.spinner.finish_and_clear();
                 if success {
-                    println!("\n{}", "==============================================".green());
-                    println!(" {}", message.green().bold());
-                    println!("{}", "==============================================".green());
+                    println!("{} {}", "[ ok ]".green().bold(), message.green().bold());
                 } else {
-                    println!("\n{}", "==============================================".red());
-                    println!(" {}", message.red().bold());
-                    println!("{}", "==============================================".red());
+                    println!("{} {}", "[fail]".red().bold(), message.red().bold());
                 }
             }
         }

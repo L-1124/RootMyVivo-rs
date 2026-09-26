@@ -9,21 +9,12 @@ use crate::catalog::CatalogV5;
 use crate::device::GateStatus;
 use crate::error::{Result, RmvError};
 use crate::event::{EngineEvent, EngineStatus, LogLevel, Phase};
-use crate::guard::{self, BootVerdict};
 use crate::history::{HistoryManager, RunRecord};
 use crate::ksu::{KsuOrchestrator, KsuVariant};
 use crate::payload::{find_local_payload, verify_payload_file};
 use crate::persistence::Persistence;
 use crate::transport::Transport;
 
-/// 读取设备当前 boot_id（失败返回空串）。
-async fn read_boot_id<T: Transport>(transport: &T) -> String {
-    transport
-        .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
-        .await
-        .map(|(_, out)| out.trim().to_string())
-        .unwrap_or_default()
-}
 
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
@@ -44,8 +35,6 @@ pub struct EngineOptions {
     pub manager_apk: Option<PathBuf>,
     /// 提权等待窗口（秒）。CFI 探测最多 24 次且带随机延迟，窗口需覆盖整个探测期。
     pub timeout_secs: u64,
-    /// 允许在被上一次失败污染的 boot 上继续执行（默认拒绝，强制先重启）。
-    pub allow_dirty_boot: bool,
 }
 
 impl Default for EngineOptions {
@@ -64,7 +53,6 @@ impl Default for EngineOptions {
             dry_run: false,
             manager_apk: None,
             timeout_secs: 900,
-            allow_dirty_boot: false,
         }
     }
 }
@@ -85,76 +73,7 @@ impl ExploitEngine {
         }
     }
 
-    /// 入口：负责 dirty-boot 守护。失败后标记该 boot 已污染，禁止原地重试。
     pub async fn run<T: Transport>(
-        &self,
-        transport: &T,
-        options: EngineOptions,
-        event_tx: UnboundedSender<EngineEvent>,
-    ) -> Result<()> {
-        let boot_before = read_boot_id(transport).await;
-
-        if !options.allow_dirty_boot {
-            if let BootVerdict::Poisoned(reason) = guard::check(&boot_before) {
-                let msg = t!("log.dirty_boot_blocked", reason = reason).to_string();
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Error,
-                    line: msg.clone(),
-                });
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Warn,
-                    line: t!("log.dirty_boot_hint").to_string(),
-                });
-                let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
-                let _ = event_tx.send(EngineEvent::Completed {
-                    success: false,
-                    message: msg.clone(),
-                });
-                return Err(RmvError::ExploitFailed(msg));
-            }
-        }
-
-        let result = self.run_inner(transport, options, event_tx.clone()).await;
-
-        match &result {
-            Ok(()) => guard::clear(),
-            Err(_) => {
-                let boot_after = read_boot_id(transport).await;
-                let tampered = guard::boot_id_tampered(&boot_before, &boot_after);
-                let timed_out = matches!(result, Err(RmvError::ExploitTimeout { .. }));
-
-                // 仅在 boot_id 被改写或载荷超时时判定污染，无害失败不要求重启。
-                if tampered || timed_out {
-                    let _ = guard::save(&guard::DirtyBoot {
-                        boot_id: boot_before.clone(),
-                        reason: "previous escalation failed".to_string(),
-                        at_unix: guard::now_unix(),
-                    });
-                }
-                if tampered {
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Error,
-                        line: t!("log.boot_id_tampered").to_string(),
-                    });
-                }
-                if tampered || timed_out {
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Warn,
-                        line: t!("log.reboot_required").to_string(),
-                    });
-                    // 失败也发 Completed，让红框承载恢复指引。
-                    let _ = event_tx.send(EngineEvent::Completed {
-                        success: false,
-                        message: t!("log.dirty_boot_banner").to_string(),
-                    });
-                }
-            }
-        }
-
-        result
-    }
-
-    async fn run_inner<T: Transport>(
         &self,
         transport: &T,
         options: EngineOptions,
@@ -203,18 +122,10 @@ impl ExploitEngine {
                 });
             }
             GateStatus::Patched { version, reason } => {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Error,
-                    line: t!("log.gate_blocked_patched", version = &version, reason = &reason).to_string(),
-                });
                 let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                 return Err(RmvError::UnsupportedKernel { version, reason });
             }
             GateStatus::UnsupportedVersion(v) => {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Error,
-                    line: t!("log.gate_blocked_unsupported", version = &v).to_string(),
-                });
                 let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                 return Err(RmvError::UnsupportedKernel {
                     version: v,
@@ -234,12 +145,10 @@ impl ExploitEngine {
             });
 
             if !custom.exists() {
-                let err_msg = t!("error.payload_not_found", device = "local", kernel = custom.display().to_string()).to_string();
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Error,
-                    line: err_msg.clone(),
-                });
-                return Err(RmvError::ExploitFailed(err_msg));
+                let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+                return Err(RmvError::ExploitFailed(
+                    t!("error.local_payload_not_found", path = custom.display().to_string()).to_string(),
+                ));
             }
             custom.clone()
         } else {
@@ -318,10 +227,6 @@ impl ExploitEngine {
                 });
             }
             Ok(identity) => {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Error,
-                    line: t!("log.gate_mismatch", labels = if identity.labels.is_empty() { "-".to_string() } else { identity.labels.join(", ") }).to_string(),
-                });
                 if !options.force_payload {
                     let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                     return Err(RmvError::PayloadDeviceMismatch {
@@ -329,7 +234,11 @@ impl ExploitEngine {
                             .abogki_fingerprint
                             .clone()
                             .unwrap_or_else(|| device.device.clone()),
-                        found: "未内嵌任何本机指纹".to_string(),
+                        found: if identity.labels.is_empty() {
+                            "unlabeled".to_string()
+                        } else {
+                            identity.labels.join(", ")
+                        },
                         labels: identity.labels.join(", "),
                     });
                 }
@@ -339,10 +248,6 @@ impl ExploitEngine {
                 });
             }
             Err(e) => {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Error,
-                    line: e.to_string(),
-                });
                 if !options.force_payload {
                     let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                     return Err(e);

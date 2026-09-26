@@ -1,3 +1,4 @@
+use colored::Colorize;
 rust_i18n::i18n!("../rmv-core/locales", fallback = "en");
 
 mod commands;
@@ -70,8 +71,6 @@ enum Commands {
         #[arg(long, default_value_t = 900)]
         timeout: u64,
 
-        #[arg(long, default_value_t = false)]
-        allow_dirty_boot: bool,
     },
 
     Clean {
@@ -151,7 +150,6 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                 .mut_arg("dry_run", |a| a.help(t!("cli.arg_dry_run").to_string()))
                 .mut_arg("manager_apk", |a| a.help(t!("cli.arg_manager_apk").to_string()))
                 .mut_arg("timeout", |a| a.help(t!("cli.arg_timeout").to_string()))
-                .mut_arg("allow_dirty_boot", |a| a.help(t!("cli.arg_allow_dirty_boot").to_string()))
         })
         .mut_subcommand("clean", |sc| {
             sc.about(t!("cli.clean_about").to_string())
@@ -165,14 +163,20 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
     let initial_lang = early_detect_language();
     set_current_language(initial_lang);
     rust_i18n::set_locale(initial_lang.code());
 
     let cmd = localize_command(Cli::command());
     let matches = cmd.get_matches();
-    let cli = Cli::from_arg_matches(&matches)?;
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = e.print();
+            std::process::exit(1);
+        }
+    };
 
     if let Some(l) = &cli.lang {
         let selected = Language::from_code(l);
@@ -180,9 +184,9 @@ async fn main() -> anyhow::Result<()> {
         rust_i18n::set_locale(selected.code());
     }
 
-    match cli.command {
-        Commands::Check => commands::run_check(cli.serial).await?,
-        Commands::Catalog { catalog_url } => commands::run_catalog(cli.serial, catalog_url).await?,
+    let result = match cli.command {
+        Commands::Check => commands::run_check(cli.serial).await,
+        Commands::Catalog { catalog_url } => commands::run_catalog(cli.serial, catalog_url).await,
         Commands::Run {
             payload,
             catalog_url,
@@ -197,7 +201,6 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             manager_apk,
             timeout,
-            allow_dirty_boot,
         } => {
             commands::run_exploit(
                 cli.serial,
@@ -214,16 +217,18 @@ async fn main() -> anyhow::Result<()> {
                 dry_run,
                 manager_apk,
                 timeout,
-                allow_dirty_boot,
             )
-            .await?
+            .await
         }
-        Commands::Clean { deep } => commands::run_clean(cli.serial, deep).await?,
+        Commands::Clean { deep } => commands::run_clean(cli.serial, deep).await,
         Commands::History { action } => match action.unwrap_or(HistoryAction::List) {
-            HistoryAction::List => commands::run_history_list().await?,
-            HistoryAction::Clear => commands::run_history_clear().await?,
+            HistoryAction::List => commands::run_history_list().await,
+            HistoryAction::Clear => commands::run_history_clear().await,
         },
-    }
+    };
 
-    Ok(())
+    if let Err(err) = result {
+        eprintln!("{} {}", "[fail]".red().bold(), err);
+        std::process::exit(1);
+    }
 }
