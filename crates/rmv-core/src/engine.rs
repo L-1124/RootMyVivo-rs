@@ -142,6 +142,11 @@ impl ExploitEngine {
                         level: LogLevel::Warn,
                         line: t!("log.reboot_required").to_string(),
                     });
+                    // 失败也发 Completed，让红框承载恢复指引。
+                    let _ = event_tx.send(EngineEvent::Completed {
+                        success: false,
+                        message: t!("log.dirty_boot_banner").to_string(),
+                    });
                 }
             }
         }

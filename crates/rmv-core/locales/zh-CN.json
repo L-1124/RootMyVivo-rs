@@ -76,7 +76,8 @@
     "dirty_boot_blocked": "拒绝执行：该 boot 已被上一次失败的提权污染 (%{reason})",
     "dirty_boot_hint": "请先重启设备（被污染的 boot 会导致新启动的 App 崩溃）；确知风险时才用 --allow-dirty-boot",
     "boot_id_tampered": "内核 boot_id 缓冲区被载荷改写且未还原，设备内存处于半应用状态",
-    "reboot_required": "重试前必须重启设备 —— 不要在当前 boot 上重试"
+    "reboot_required": "重试前必须重启设备 —— 不要在当前 boot 上重试",
+    "dirty_boot_banner": "失败的提权把内核内存留在了半写入状态：新启动的应用会崩溃。必须完整重启设备才能恢复（软重启不清内核内存，无效）。"
   },
   "cli": {
     "app_about": "RootMyVivo-RS: vivo/iQOO 免解锁临时提权与 KernelSU 编排工具 (Rust 版)",

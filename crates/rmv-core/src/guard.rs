@@ -43,7 +43,7 @@ pub fn clear_at(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
-/// 当前 boot 是否已被上一次失败的提权污染。
+/// 当前 boot 是否已被失败提权污染。
 pub fn check_at(path: &Path, current_boot_id: &str) -> BootVerdict {
     match load_at(path) {
         Some(d) if !current_boot_id.is_empty() && d.boot_id == current_boot_id => {
@@ -90,7 +90,7 @@ mod tests {
         let path = tmp_path("roundtrip");
         clear_at(&path);
 
-        // 未记录 → 干净
+        // 未记录时判定为干净
         assert_eq!(check_at(&path, "boot-A"), BootVerdict::Clean);
 
         save_at(
@@ -103,12 +103,12 @@ mod tests {
         )
         .unwrap();
 
-        // 同一 boot → 判定为污染
+        // 同一 boot 判定为污染
         assert_eq!(
             check_at(&path, "boot-A"),
             BootVerdict::Poisoned("exploit failed".to_string())
         );
-        // 换 boot（已重启）→ 干净
+        // 换 boot 后判定为干净
         assert_eq!(check_at(&path, "boot-B"), BootVerdict::Clean);
 
         clear_at(&path);

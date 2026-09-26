@@ -60,9 +60,9 @@ pub fn inspect_payload(bytes: &[u8]) -> PayloadIdentity {
 /// 读取载荷文件并与目标设备比对身份。
 ///
 /// 判定：
-/// - 含本机 abogki 指纹 → 通过（`has_device_fingerprint = true`）。
-/// - 否则若含其它设备的构建标签或其它内核指纹 → 拒绝下发。
-/// - 两者都没有（静态库被剥离）→ 无法判定，放行但标记未确认。
+/// - 含本机 abogki 指纹时通过（`has_device_fingerprint = true`）。
+/// - 否则若含其它设备的构建标签或其它内核指纹，则拒绝下发。
+/// - 两者都没有（静态库被剥离）时无法判定，放行但标记未确认。
 pub fn verify_payload_file(path: &Path, device: &DeviceInfo) -> Result<PayloadIdentity> {
     let bytes = std::fs::read(path).map_err(|e| {
         RmvError::ExploitFailed(t!("error.read_payload_failed", path = path.display().to_string(), error = e.to_string()).to_string())
@@ -75,7 +75,7 @@ pub fn verify_payload_file(path: &Path, device: &DeviceInfo) -> Result<PayloadId
         if identity.has_device_fingerprint {
             return Ok(identity);
         }
-        // 本机能识别指纹，但载荷里写着别的内核构建 → 明确不安全
+        // 本机可识别指纹，但载荷内写的是别的内核构建
         if !identity.abogki.is_empty() {
             return Err(RmvError::PayloadDeviceMismatch {
                 expected: own.clone(),

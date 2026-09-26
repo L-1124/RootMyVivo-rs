@@ -76,7 +76,8 @@
     "dirty_boot_blocked": "Refusing to run: this boot was left poisoned by a previous failed escalation (%{reason})",
     "dirty_boot_hint": "Reboot the device first (a poisoned boot makes newly launched apps crash); use --allow-dirty-boot only if you know the risk",
     "boot_id_tampered": "Kernel boot_id buffer was modified by the payload and not restored; device memory is in a half-applied state",
-    "reboot_required": "Reboot the device before retrying - do not retry on this boot"
+    "reboot_required": "Reboot the device before retrying - do not retry on this boot",
+    "dirty_boot_banner": "Device memory was left half-written by the failed escalation: newly launched apps will crash. A full reboot is required to recover - soft reboot does not clear kernel memory."
   },
   "cli": {
     "app_about": "RootMyVivo-RS: Unlock-free temporary root & KernelSU orchestrator for vivo/iQOO devices (Rust)",
