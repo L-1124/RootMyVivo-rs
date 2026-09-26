@@ -10,7 +10,7 @@ use crate::ui::CliUi;
 
 pub async fn run_check(serial: Option<String>) -> Result<()> {
     println!("{}", "正在检测 ADB 连接与设备环境...".bold().cyan());
-    let transport = AdbCliTransport::new(serial);
+    let transport = AdbCliTransport::resolve(serial).await?;
     let dev = transport
         .get_device_info()
         .await
@@ -74,7 +74,7 @@ pub async fn run_catalog(serial: Option<String>, catalog_url: Option<String>) ->
         catalog.builds.len()
     );
 
-    let transport = AdbCliTransport::new(serial);
+    let transport = AdbCliTransport::resolve(serial).await.unwrap_or_else(|_| AdbCliTransport::new(None));
     if let Ok(dev) = transport.get_device_info().await {
         println!("{}", "正在比对当前连接设备:".bold().cyan());
         match catalog.match_payload(&dev) {
@@ -113,8 +113,9 @@ pub async fn run_exploit(
     force_payload: bool,
     payload_dirs: Vec<PathBuf>,
     dry_run: bool,
+    manager_apk: Option<PathBuf>,
 ) -> Result<()> {
-    let transport = AdbCliTransport::new(serial);
+    let transport = AdbCliTransport::resolve(serial).await?;
     let ksu_variant = KsuVariant::from_id(&ksu);
 
     let options = EngineOptions {
@@ -129,6 +130,7 @@ pub async fn run_exploit(
         force_payload,
         payload_dirs,
         dry_run,
+        manager_apk,
     };
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
@@ -152,7 +154,7 @@ pub async fn run_exploit(
 pub async fn run_clean(serial: Option<String>, deep: bool) -> Result<()> {
     let mode_desc = if deep { "深度清理模式 (含残留 su/socket/daemon 日志)" } else { "基础清理模式" };
     println!("{} ({})", "正在清理手机上的临时提权痕迹...".bold().cyan(), mode_desc);
-    let transport = AdbCliTransport::new(serial);
+    let transport = AdbCliTransport::resolve(serial).await?;
     let outcome = Persistence::clean_traces(&transport, deep)
         .await
         .context("清理痕迹失败")?;

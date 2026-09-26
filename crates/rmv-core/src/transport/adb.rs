@@ -1,9 +1,29 @@
 use async_trait::async_trait;
 use std::path::Path;
+use std::time::Duration;
 use tokio::process::Command;
+use tokio::time::timeout;
+
 use crate::device::DeviceInfo;
 use crate::error::{Result, RmvError};
 use super::Transport;
+
+async fn run_cmd_with_timeout(
+    mut cmd: Command,
+    dur: Duration,
+    action_desc: &str,
+) -> Result<std::process::Output> {
+    match timeout(dur, cmd.output()).await {
+        Ok(res) => res.map_err(|e| RmvError::Adb {
+            message: format!("调用 adb {} 失败: {}", action_desc, e),
+            code: None,
+        }),
+        Err(_) => Err(RmvError::Adb {
+            message: format!("调用 adb {} 超时 (超过 {} 秒)", action_desc, dur.as_secs()),
+            code: None,
+        }),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AdbCliTransport {
@@ -15,6 +35,27 @@ impl AdbCliTransport {
         Self { serial }
     }
 
+    pub async fn resolve(serial: Option<String>) -> Result<Self> {
+        if let Some(s) = serial {
+            return Ok(Self::new(Some(s)));
+        }
+
+        let devices = Self::list_devices().await.unwrap_or_default();
+        if devices.len() == 1 {
+            Ok(Self::new(Some(devices[0].clone())))
+        } else if devices.len() > 1 {
+            Err(RmvError::Adb {
+                message: format!(
+                    "检测到多台在线 ADB 设备 ({})，请使用 -s 参数指定目标",
+                    devices.join(", ")
+                ),
+                code: None,
+            })
+        } else {
+            Ok(Self::new(None))
+        }
+    }
+
     fn base_cmd(&self) -> Command {
         let mut cmd = Command::new("adb");
         if let Some(s) = &self.serial {
@@ -24,14 +65,9 @@ impl AdbCliTransport {
     }
 
     pub async fn list_devices() -> Result<Vec<String>> {
-        let out = Command::new("adb")
-            .arg("devices")
-            .output()
-            .await
-            .map_err(|e| RmvError::Adb {
-                message: format!("执行 adb devices 失败，请确认 adb 已安装且在 PATH 中: {}", e),
-                code: None,
-            })?;
+        let mut cmd = Command::new("adb");
+        cmd.arg("devices");
+        let out = run_cmd_with_timeout(cmd, Duration::from_secs(8), "devices").await?;
 
         let text = String::from_utf8_lossy(&out.stdout);
         let mut devices = Vec::new();
@@ -48,15 +84,10 @@ impl AdbCliTransport {
 #[async_trait]
 impl Transport for AdbCliTransport {
     async fn exec(&self, cmd: &str) -> Result<(i32, String)> {
-        let output = self.base_cmd()
-            .arg("shell")
-            .arg(cmd)
-            .output()
-            .await
-            .map_err(|e| RmvError::Adb {
-                message: format!("调用 adb shell 失败: {}", e),
-                code: None,
-            })?;
+        let mut adb_cmd = self.base_cmd();
+        adb_cmd.arg("shell").arg(cmd);
+
+        let output = run_cmd_with_timeout(adb_cmd, Duration::from_secs(45), "shell").await?;
 
         let code = output.status.code().unwrap_or(-1);
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -74,16 +105,10 @@ impl Transport for AdbCliTransport {
     }
 
     async fn push(&self, local_path: &Path, remote_path: &str) -> Result<()> {
-        let output = self.base_cmd()
-            .arg("push")
-            .arg(local_path)
-            .arg(remote_path)
-            .output()
-            .await
-            .map_err(|e| RmvError::Adb {
-                message: format!("调用 adb push 失败: {}", e),
-                code: None,
-            })?;
+        let mut adb_cmd = self.base_cmd();
+        adb_cmd.arg("push").arg(local_path).arg(remote_path);
+
+        let output = run_cmd_with_timeout(adb_cmd, Duration::from_secs(60), "push").await?;
 
         if !output.status.success() {
             return Err(RmvError::Adb {
@@ -98,16 +123,10 @@ impl Transport for AdbCliTransport {
     }
 
     async fn pull(&self, remote_path: &str, local_path: &Path) -> Result<()> {
-        let output = self.base_cmd()
-            .arg("pull")
-            .arg(remote_path)
-            .arg(local_path)
-            .output()
-            .await
-            .map_err(|e| RmvError::Adb {
-                message: format!("调用 adb pull 失败: {}", e),
-                code: None,
-            })?;
+        let mut adb_cmd = self.base_cmd();
+        adb_cmd.arg("pull").arg(remote_path).arg(local_path);
+
+        let output = run_cmd_with_timeout(adb_cmd, Duration::from_secs(60), "pull").await?;
 
         if !output.status.success() {
             return Err(RmvError::Adb {
@@ -122,7 +141,9 @@ impl Transport for AdbCliTransport {
     }
 
     async fn is_alive(&self) -> bool {
-        match self.base_cmd().arg("get-state").output().await {
+        let mut adb_cmd = self.base_cmd();
+        adb_cmd.arg("get-state");
+        match run_cmd_with_timeout(adb_cmd, Duration::from_secs(5), "get-state").await {
             Ok(out) => {
                 let state = String::from_utf8_lossy(&out.stdout);
                 state.trim() == "device"
@@ -158,14 +179,9 @@ impl Transport for AdbCliTransport {
     }
 
     async fn reboot_and_wait(&self, timeout_sec: u64) -> Result<()> {
-        let output = self.base_cmd()
-            .arg("reboot")
-            .output()
-            .await
-            .map_err(|e| RmvError::Adb {
-                message: format!("执行 adb reboot 失败: {}", e),
-                code: None,
-            })?;
+        let mut reboot_cmd = self.base_cmd();
+        reboot_cmd.arg("reboot");
+        let output = run_cmd_with_timeout(reboot_cmd, Duration::from_secs(10), "reboot").await?;
 
         if !output.status.success() {
             return Err(RmvError::Adb {
@@ -177,21 +193,20 @@ impl Transport for AdbCliTransport {
             });
         }
 
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
 
-        let _ = self.base_cmd()
-            .arg("wait-for-device")
-            .output()
-            .await;
+        let mut wait_cmd = self.base_cmd();
+        wait_cmd.arg("wait-for-device");
+        let _ = run_cmd_with_timeout(wait_cmd, Duration::from_secs(timeout_sec), "wait-for-device").await;
 
         let start = std::time::Instant::now();
-        let timeout = std::time::Duration::from_secs(timeout_sec);
+        let timeout_dur = Duration::from_secs(timeout_sec);
 
-        while start.elapsed() < timeout {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        while start.elapsed() < timeout_dur {
+            tokio::time::sleep(Duration::from_secs(2)).await;
             if let Ok((code, out)) = self.exec("getprop sys.boot_completed").await {
                 if code == 0 && out.trim() == "1" {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                     return Ok(());
                 }
             }

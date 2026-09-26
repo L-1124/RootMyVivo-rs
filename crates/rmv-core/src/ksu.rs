@@ -1,3 +1,4 @@
+use std::path::Path;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -51,10 +52,27 @@ impl KsuOrchestrator {
             .await?;
         Ok(out.to_lowercase().contains("kernelsu"))
     }
+    pub async fn wait_for_framework_ready<T: Transport>(
+        transport: &T,
+        timeout_sec: u64,
+    ) -> Result<bool> {
+        let start = std::time::Instant::now();
+        let timeout_dur = Duration::from_secs(timeout_sec);
+        while start.elapsed() < timeout_dur {
+            if let Ok((code, out)) = transport.exec("pm path android 2>/dev/null").await {
+                if code == 0 && out.contains("package:") {
+                    return Ok(true);
+                }
+            }
+            sleep(Duration::from_millis(1500)).await;
+        }
+        Ok(false)
+    }
 
     pub async fn ensure_ksud_deployed<T: Transport>(
         transport: &T,
         variant: KsuVariant,
+        host_manager_apk: Option<&Path>,
     ) -> Result<String> {
         let default_ksud = "/data/local/tmp/ksud";
 
@@ -99,8 +117,24 @@ impl KsuOrchestrator {
             }
         }
 
+        if let Some(apk_path) = host_manager_apk {
+            if apk_path.exists() {
+                let remote_apk = "/data/local/tmp/manager_temp.apk";
+                if transport.push(apk_path, remote_apk).await.is_ok() {
+                    let extract_script = format!(
+                        "unzip -p {} lib/arm64-v8a/libksud.so > {} 2>/dev/null; rm -f {}; chmod 755 {}; test -x {} && echo KSUD_OK",
+                        remote_apk, default_ksud, remote_apk, default_ksud, default_ksud
+                    );
+                    let (code, out) = transport.exec(&extract_script).await?;
+                    if code == 0 && out.contains("KSUD_OK") {
+                        return Ok(default_ksud.to_string());
+                    }
+                }
+            }
+        }
+
         Err(RmvError::KsuFailed(format!(
-            "无法在设备上定位或提取 ksud，请确认手机已安装 {} 或 KernelSU 相关管理器",
+            "无法在设备上定位或提取 ksud，请确认手机已安装 {} 或通过 --manager-apk 提供安装包",
             variant.display_name()
         )))
     }
@@ -109,11 +143,14 @@ impl KsuOrchestrator {
         transport: &T,
         variant: KsuVariant,
         custom_ksud: Option<&str>,
+        host_manager_apk: Option<&Path>,
     ) -> Result<()> {
+        let _ = Self::wait_for_framework_ready(transport, 30).await;
+
         let ksud = if let Some(path) = custom_ksud {
             path.to_string()
         } else {
-            Self::ensure_ksud_deployed(transport, variant).await?
+            Self::ensure_ksud_deployed(transport, variant, host_manager_apk).await?
         };
         let pkg = variant.package_name();
 

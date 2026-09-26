@@ -77,6 +77,11 @@ enum Commands {
         /// 只解析并校验载荷，不下发、不执行
         #[arg(long, default_value_t = false)]
         dry_run: bool,
+
+
+        /// PC 本地提供的 KernelSU/SukiSU 管理器 APK 路径（用于免预装就地提取 ksud）
+        #[arg(long = "manager-apk", value_name = "APK_PATH")]
+        manager_apk: Option<PathBuf>,
     },
 
     /// 清理手机端的临时运行文件与日志
@@ -120,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
             force_payload,
             payload_dirs,
             dry_run,
+            manager_apk,
         } => {
             commands::run_exploit(
                 cli.serial,
@@ -134,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
                 force_payload,
                 payload_dirs,
                 dry_run,
+                manager_apk,
             )
             .await?
         }

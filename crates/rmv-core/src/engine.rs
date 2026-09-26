@@ -29,6 +29,8 @@ pub struct EngineOptions {
     pub payload_dirs: Vec<PathBuf>,
     /// 只解析与校验载荷，不下发、不执行。
     pub dry_run: bool,
+    /// PC 本地提供的 KernelSU/SukiSU 管理器 APK 路径（用于免预装就地提取 ksud）。
+    pub manager_apk: Option<PathBuf>,
 }
 
 impl Default for EngineOptions {
@@ -45,6 +47,7 @@ impl Default for EngineOptions {
             force_payload: false,
             payload_dirs: Vec::new(),
             dry_run: false,
+            manager_apk: None,
         }
     }
 }
@@ -429,7 +432,8 @@ impl ExploitEngine {
                 desc: format!("加载 {} 内核驱动", options.ksu_variant.display_name()),
             });
 
-            KsuOrchestrator::late_load(transport, options.ksu_variant, None).await?;
+            let host_apk = options.manager_apk.as_deref();
+            KsuOrchestrator::late_load(transport, options.ksu_variant, None, host_apk).await?;
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
                 line: format!("{} 驱动加载成功 (Live)", options.ksu_variant.display_name()),
