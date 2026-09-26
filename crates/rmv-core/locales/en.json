@@ -5,7 +5,6 @@
     "download": "Payload Download & Verify",
     "deploy": "Deploy Payload to Device",
     "exploit": "Execute Privilege Escalation",
-    "persistence": "Configure Local Persistence",
     "ksu": "Load KernelSU Module",
     "finished": "Finished"
   },
@@ -59,8 +58,6 @@
     "reboot_pristine": "Rebooting device to acquire pristine boot_id...",
     "reboot_done": "Device rebooted and reconnected",
     "uid0_ok": "Successfully acquired UID=0 (Root ready)",
-    "persist_start": "Persisting local ADB TCP 5555 and keys",
-    "persist_ok": "Local TCP 5555 persistence configured",
     "ksu_start": "Loading %{name} driver",
     "ksu_ok": "%{name} driver loaded successfully (Live)",
     "finished": "Root acquisition and environment setup complete!",

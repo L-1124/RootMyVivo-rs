@@ -5,7 +5,6 @@
     "download": "载荷下载与校验",
     "deploy": "推送载荷至设备",
     "exploit": "执行提权注入",
-    "persistence": "本地持久化连接配置",
     "ksu": "KernelSU 模块加载",
     "finished": "完成"
   },
@@ -59,8 +58,6 @@
     "reboot_pristine": "正在重启设备以获取全新的启动状态 (pristine boot_id)...",
     "reboot_done": "设备已重启完成并重新连接就绪",
     "uid0_ok": "成功取得 UID=0 (Root 权限就绪)",
-    "persist_start": "固化 ADB TCP 5555 端口与本地认证密钥",
-    "persist_ok": "已固化本地 TCP 5555 通道",
     "ksu_start": "加载 %{name} 内核驱动",
     "ksu_ok": "%{name} 驱动加载成功 (Live)",
     "finished": "Root 获取与环境编排全部完成！",

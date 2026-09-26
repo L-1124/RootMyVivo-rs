@@ -7,7 +7,6 @@ pub enum Phase {
     Download,
     Deploy,
     Exploit,
-    Persistence,
     Ksu,
     Finished,
 }
@@ -20,7 +19,6 @@ impl Phase {
             Self::Download => rust_i18n::t!("phase.download").to_string(),
             Self::Deploy => rust_i18n::t!("phase.deploy").to_string(),
             Self::Exploit => rust_i18n::t!("phase.exploit").to_string(),
-            Self::Persistence => rust_i18n::t!("phase.persistence").to_string(),
             Self::Ksu => rust_i18n::t!("phase.ksu").to_string(),
             Self::Finished => rust_i18n::t!("phase.finished").to_string(),
         }

@@ -160,7 +160,7 @@ impl ExploitEngine {
         options: EngineOptions,
         event_tx: UnboundedSender<EngineEvent>,
     ) -> Result<()> {
-        let total_steps = if options.skip_ksu { 5 } else { 6 };
+        let total_steps = if options.skip_ksu { 4 } else { 5 };
         let _ = event_tx.send(EngineEvent::Status(EngineStatus::Running));
 
         // 步骤 1: 设备环境与门禁检测
@@ -556,22 +556,6 @@ impl ExploitEngine {
             });
         }
 
-        // 步骤: 持久化配置
-        let persist_step = total_steps;
-        let _ = event_tx.send(EngineEvent::Step {
-            phase: Phase::Persistence,
-            index: persist_step,
-            total: total_steps,
-            desc: t!("log.persist_start").to_string(),
-        });
-
-        let persisted = Persistence::setup_adb_tcp(transport).await?;
-        if persisted {
-            let _ = event_tx.send(EngineEvent::Log {
-                level: LogLevel::Ok,
-                line: t!("log.persist_ok").to_string(),
-            });
-        }
         // 清理设备端临时痕迹
         let _ = Persistence::clean_traces(transport, false).await;
 
