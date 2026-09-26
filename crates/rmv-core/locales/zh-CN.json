@@ -72,7 +72,11 @@
     "dry_run_complete_msg": "dry-run 完成，未向设备下发任何文件；载荷: %{path}",
     "exploit_attached": "检测到已有提权进程仍在探测，改为附加监听其日志",
     "exploit_gone": "提权进程已退出，未取得 Root",
-    "exploit_still_running": "载荷在 %{secs} 秒后仍在探测；进程继续在后台运行，可重新运行以附加监听"
+    "exploit_still_running": "载荷在 %{secs} 秒后仍在探测；进程继续在后台运行，可重新运行以附加监听",
+    "dirty_boot_blocked": "拒绝执行：该 boot 已被上一次失败的提权污染 (%{reason})",
+    "dirty_boot_hint": "请先重启设备（被污染的 boot 会导致新启动的 App 崩溃）；确知风险时才用 --allow-dirty-boot",
+    "boot_id_tampered": "内核 boot_id 缓冲区被载荷改写且未还原，设备内存处于半应用状态",
+    "reboot_required": "重试前必须重启设备 —— 不要在当前 boot 上重试"
   },
   "cli": {
     "app_about": "RootMyVivo-RS: vivo/iQOO 免解锁临时提权与 KernelSU 编排工具 (Rust 版)",
@@ -138,6 +142,7 @@
     "arg_help": "打印帮助信息（使用 '-h' 查看简要说明）",
     "arg_version": "打印版本信息",
     "help_subcmd": "打印此说明或指定子命令的帮助信息",
-    "arg_timeout": "提权等待窗口秒数（CFI 探测可能持续数分钟）"
+    "arg_timeout": "提权等待窗口秒数（CFI 探测可能持续数分钟）",
+    "arg_allow_dirty_boot": "即使当前 boot 已被上次失败污染也允许执行（不推荐）"
   }
 }

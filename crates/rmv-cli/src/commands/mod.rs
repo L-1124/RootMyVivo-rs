@@ -122,6 +122,7 @@ pub async fn run_exploit(
     dry_run: bool,
     manager_apk: Option<PathBuf>,
     timeout_secs: u64,
+    allow_dirty_boot: bool,
 ) -> Result<()> {
     let transport = AdbCliTransport::resolve(serial).await?;
     let ksu_variant = KsuVariant::from_id(&ksu);
@@ -140,6 +141,7 @@ pub async fn run_exploit(
         dry_run,
         manager_apk,
         timeout_secs,
+        allow_dirty_boot,
     };
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();

@@ -72,7 +72,11 @@
     "dry_run_complete_msg": "dry-run complete, no files were deployed to device; payload: %{path}",
     "exploit_attached": "Existing exploit process is still probing; attaching to its live log",
     "exploit_gone": "Exploit process exited without reaching root",
-    "exploit_still_running": "Payload still probing after %{secs}s; it keeps running in background - re-run to attach"
+    "exploit_still_running": "Payload still probing after %{secs}s; it keeps running in background - re-run to attach",
+    "dirty_boot_blocked": "Refusing to run: this boot was left poisoned by a previous failed escalation (%{reason})",
+    "dirty_boot_hint": "Reboot the device first (a poisoned boot makes newly launched apps crash); use --allow-dirty-boot only if you know the risk",
+    "boot_id_tampered": "Kernel boot_id buffer was modified by the payload and not restored; device memory is in a half-applied state",
+    "reboot_required": "Reboot the device before retrying - do not retry on this boot"
   },
   "cli": {
     "app_about": "RootMyVivo-RS: Unlock-free temporary root & KernelSU orchestrator for vivo/iQOO devices (Rust)",
@@ -138,6 +142,7 @@
     "arg_help": "Print help (see a summary with '-h')",
     "arg_version": "Print version",
     "help_subcmd": "Print this message or the help of the given subcommand(s)",
-    "arg_timeout": "Privilege escalation wait window in seconds (CFI probing can take minutes)"
+    "arg_timeout": "Privilege escalation wait window in seconds (CFI probing can take minutes)",
+    "arg_allow_dirty_boot": "Allow running even if this boot was left poisoned by a previous failure (not recommended)"
   }
 }

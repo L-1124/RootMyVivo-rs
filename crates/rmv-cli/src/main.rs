@@ -69,6 +69,9 @@ enum Commands {
 
         #[arg(long, default_value_t = 900)]
         timeout: u64,
+
+        #[arg(long, default_value_t = false)]
+        allow_dirty_boot: bool,
     },
 
     Clean {
@@ -148,6 +151,7 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                 .mut_arg("dry_run", |a| a.help(t!("cli.arg_dry_run").to_string()))
                 .mut_arg("manager_apk", |a| a.help(t!("cli.arg_manager_apk").to_string()))
                 .mut_arg("timeout", |a| a.help(t!("cli.arg_timeout").to_string()))
+                .mut_arg("allow_dirty_boot", |a| a.help(t!("cli.arg_allow_dirty_boot").to_string()))
         })
         .mut_subcommand("clean", |sc| {
             sc.about(t!("cli.clean_about").to_string())
@@ -193,6 +197,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             manager_apk,
             timeout,
+            allow_dirty_boot,
         } => {
             commands::run_exploit(
                 cli.serial,
@@ -209,6 +214,7 @@ async fn main() -> anyhow::Result<()> {
                 dry_run,
                 manager_apk,
                 timeout,
+                allow_dirty_boot,
             )
             .await?
         }
