@@ -5,56 +5,63 @@ use rmv_core::{
     AdbCliTransport, CatalogV5, CleanOutcome, EngineOptions, ExploitEngine, GateStatus,
     HistoryManager, KsuVariant, Persistence, Transport,
 };
+use rust_i18n::t;
 use tokio::sync::mpsc;
 use crate::ui::CliUi;
 
 pub async fn run_check(serial: Option<String>) -> Result<()> {
-    println!("{}", "正在检测 ADB 连接与设备环境...".bold().cyan());
+    println!("{}", t!("cli.probing_device").bold().cyan());
     let transport = AdbCliTransport::resolve(serial).await?;
     let dev = transport
         .get_device_info()
         .await
-        .context("获取设备环境失败，请确认手机已开启 USB 调试且已授权电脑")?;
+        .context(t!("error.device_not_found", message = "ADB"))?;
 
-    println!("\n{}", "设备环境摘要".cyan().bold());
-    println!("  设备代号 : {}", dev.device.bold().green());
-    println!("  营销型号 : {}", dev.model.bold().green());
-    println!("  品牌厂商 : {}", dev.brand.bold().green());
+    println!("\n{}", t!("cli.device_summary").cyan().bold());
+    println!("  {} : {}", t!("cli.device_code"), dev.device.bold().green());
+    println!("  {} : {}", t!("cli.device_model"), dev.model.bold().green());
+    println!("  {} : {}", t!("cli.device_brand"), dev.brand.bold().green());
     println!(
-        "  内核版本 : Linux {}.{}.{}",
+        "  {} : Linux {}.{}.{}",
+        t!("cli.kernel_version"),
         dev.kernel_version.0, dev.kernel_version.1, dev.kernel_version.2
     );
     println!(
-        "  GKI 构建 : {}",
-        dev.gki_git_id.as_deref().unwrap_or("未识别").yellow()
+        "  {} : {}",
+        t!("cli.gki_build"),
+        dev.gki_git_id.as_deref().unwrap_or("-").yellow()
     );
     println!(
-        "  Build 指纹: {}",
-        dev.abogki_fingerprint.as_deref().unwrap_or("未识别").yellow()
+        "  {} : {}",
+        t!("cli.build_fingerprint"),
+        dev.abogki_fingerprint.as_deref().unwrap_or("-").yellow()
     );
-    println!("  Boot ID  : {}", dev.boot_id.dimmed());
+    println!("  {} : {}", t!("cli.boot_id"), dev.boot_id.dimmed());
     println!();
 
     match dev.evaluate_gate() {
         GateStatus::Vulnerable => {
             println!(
-                "  安全门禁 : {} {}",
-                "通过".bold().green(),
-                "(CVE-2026-43499 未修补，支持免解锁提权)".dimmed()
+                "  {} : {} {}",
+                t!("cli.security_gate"),
+                t!("cli.gate_passed_badge").bold().green(),
+                t!("cli.gate_passed_desc").dimmed()
             );
         }
         GateStatus::Patched { version, reason } => {
             println!(
-                "  安全门禁 : {} {}",
-                "拦截".bold().red(),
-                format!("(内核版本 {}: {})", version, reason).red()
+                "  {} : {} {}",
+                t!("cli.security_gate"),
+                t!("cli.gate_blocked_badge").bold().red(),
+                format!("(Linux {}: {})", version, reason).red()
             );
         }
         GateStatus::UnsupportedVersion(v) => {
             println!(
-                "  安全门禁 : {} {}",
-                "拦截".bold().yellow(),
-                format!("(内核版本 {} 不在受支持序列)", v).yellow()
+                "  {} : {} {}",
+                t!("cli.security_gate"),
+                t!("cli.gate_blocked_badge").bold().yellow(),
+                t!("cli.gate_unsupported_desc", version = v).yellow()
             );
         }
     }
@@ -63,38 +70,38 @@ pub async fn run_check(serial: Option<String>) -> Result<()> {
 }
 
 pub async fn run_catalog(serial: Option<String>, catalog_url: Option<String>) -> Result<()> {
-    println!("{}", "正在从载荷目录源获取最新清单...".bold().cyan());
+    println!("{}", t!("cli.catalog_fetching").bold().cyan());
     let catalog = CatalogV5::fetch_default_with_url(catalog_url.as_deref())
         .await
-        .context("拉取 devices.json 目录清单失败")?;
+        .context(t!("error.catalog_fetch_failed", message = "network"))?;
 
     println!(
-        "成功拉取编目，共收录 {} 款设备、{} 个内核载荷构建。\n",
-        catalog.devices.len(),
-        catalog.builds.len()
+        "{}",
+        t!(
+            "cli.catalog_fetched",
+            devices = catalog.devices.len().to_string(),
+            builds = catalog.builds.len().to_string()
+        )
     );
 
     let transport = AdbCliTransport::resolve(serial).await.unwrap_or_else(|_| AdbCliTransport::new(None));
     if let Ok(dev) = transport.get_device_info().await {
-        println!("{}", "正在比对当前连接设备:".bold().cyan());
+        println!("{}", t!("cli.matching_device").bold().cyan());
         match catalog.match_payload(&dev) {
             Some((device_entry, kernel_build)) => {
-                println!("  匹配设备 : {}", device_entry.market_name.bold().green());
-                println!("  载荷状态 : {}", kernel_build.status.bold().yellow());
+                println!("  {} : {}", t!("cli.matched_device"), device_entry.market_name.bold().green());
+                println!("  {} : {}", t!("cli.payload_status"), kernel_build.status.bold().yellow());
                 if let Some(file) = &kernel_build.file {
-                    println!("  载荷文件 : {} ({} 字节)", file.name.green(), file.size);
-                    println!("  下载地址 : {}", file.url.dimmed());
+                    println!("  {} : {} ({} bytes)", t!("cli.payload_file"), file.name.green(), file.size);
+                    println!("  {} : {}", t!("cli.download_url"), file.url.dimmed());
                 }
             }
             None => {
-                println!(
-                    "  {}",
-                    "未在当前目录中匹配到此设备的专用载荷。".yellow()
-                );
+                println!("  {}", t!("cli.no_payload_matched").yellow());
             }
         }
     } else {
-        println!("{}", "（当前未检测到 ADB 手机连接，可单独运行 `rmv check` 诊断）".dimmed());
+        println!("{}", t!("cli.no_device_connected").dimmed());
     }
 
     Ok(())
@@ -148,26 +155,23 @@ pub async fn run_exploit(
     let res = engine.run(&transport, options, event_tx).await;
     let _ = ui_handle.await;
 
-    res.context("提权执行异常")
+    res.context(t!("cli.exploit_aborted"))
 }
 
 pub async fn run_clean(serial: Option<String>, deep: bool) -> Result<()> {
-    let mode_desc = if deep { "深度清理模式 (含残留 su/socket/daemon 日志)" } else { "基础清理模式" };
-    println!("{} ({})", "正在清理手机上的临时提权痕迹...".bold().cyan(), mode_desc);
+    let mode_desc = if deep { t!("cli.clean_deep_label") } else { t!("cli.clean_basic_label") };
+    println!("{} ({})", t!("cli.cleaning_traces").bold().cyan(), mode_desc);
     let transport = AdbCliTransport::resolve(serial).await?;
     let outcome = Persistence::clean_traces(&transport, deep)
         .await
-        .context("清理痕迹失败")?;
+        .context(t!("error.exploit_failed", message = "clean"))?;
     match outcome {
         CleanOutcome::WithRoot => {
-            println!("{}", "设备临时目录与残留已清理完成（root 权限）".bold().green());
+            println!("{}", t!("cli.cleaned_root").bold().green());
         }
         CleanOutcome::ShellOnly => {
-            println!("{}", "已以 shell 身份清理当前临时文件".bold().green());
-            println!(
-                "{}",
-                "  设备当前无 root，root 属主的残留（旧 su / socket）未被移除".yellow()
-            );
+            println!("{}", t!("cli.cleaned_shell").bold().green());
+            println!("{}", t!("cli.cleaned_shell_warn").yellow());
         }
     }
     Ok(())
@@ -178,19 +182,19 @@ pub async fn run_history_list() -> Result<()> {
     let records = HistoryManager::list_records(&dir).await?;
 
     if records.is_empty() {
-        println!("{}", "暂无历史运行记录。".dimmed());
+        println!("{}", t!("cli.history_empty").dimmed());
         return Ok(());
     }
 
-    println!("\n{}", "运行历史记录".cyan().bold());
+    println!("\n{}", t!("cli.history_title").cyan().bold());
     for rec in records {
         let status = if rec.success {
-            "成功".green().bold()
+            "PASS".green().bold()
         } else {
-            "失败".red().bold()
+            "FAIL".red().bold()
         };
         println!(
-            "  [{}] {} | 设备: {} ({}) | KSU: {} | 载荷: {}",
+            "  [{}] {} | Device: {} ({}) | KSU: {} | Payload: {}",
             rec.id.yellow(),
             status,
             rec.device_model,
@@ -200,7 +204,7 @@ pub async fn run_history_list() -> Result<()> {
         );
     }
     println!();
-    println!("历史文件存储在: {}", dir.display().to_string().dimmed());
+    println!("{} {}", t!("cli.history_stored_at"), dir.display().to_string().dimmed());
     println!();
     Ok(())
 }
@@ -208,6 +212,6 @@ pub async fn run_history_list() -> Result<()> {
 pub async fn run_history_clear() -> Result<()> {
     let dir = HistoryManager::default_dir();
     let count = HistoryManager::clear_records(&dir).await?;
-    println!("已清除 {} 条历史运行记录。", count.to_string().green().bold());
+    println!("{}", t!("cli.history_cleared", count = count.to_string()).green().bold());
     Ok(())
 }

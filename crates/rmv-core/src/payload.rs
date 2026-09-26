@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use std::path::{Path, PathBuf};
 use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
@@ -64,7 +65,7 @@ pub fn inspect_payload(bytes: &[u8]) -> PayloadIdentity {
 /// - 两者都没有（静态库被剥离）→ 无法判定，放行但标记未确认。
 pub fn verify_payload_file(path: &Path, device: &DeviceInfo) -> Result<PayloadIdentity> {
     let bytes = std::fs::read(path).map_err(|e| {
-        RmvError::ExploitFailed(format!("读取载荷文件失败 {}: {}", path.display(), e))
+        RmvError::ExploitFailed(t!("error.read_payload_failed", path = path.display().to_string(), error = e.to_string()).to_string())
     })?;
 
     let mut identity = inspect_payload(&bytes);

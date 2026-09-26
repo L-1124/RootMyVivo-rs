@@ -1,20 +1,21 @@
+rust_i18n::i18n!("../rmv-core/locales", fallback = "en");
+
 mod commands;
 mod ui;
 
 use std::path::PathBuf;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use rmv_core::{set_current_language, Language};
+use rust_i18n::t;
 
 #[derive(Parser)]
-#[command(
-    name = "rmv",
-    version,
-    about = "RootMyVivo-RS: vivo/iQOO 免解锁临时提权与 KernelSU 编排工具 (Rust 版)",
-    long_about = "RootMyVivo-RS 为锁定 Bootloader 的 vivo/iQOO 机型提供全自动免解锁提权、KernelSU/SukiSU 动态加载以及本地 ADB 鉴权固化。"
-)]
+#[command(name = "rmv", version)]
 struct Cli {
-    /// 目标设备 ADB 序列号（多设备连接时使用）
     #[arg(short, long, global = true)]
     serial: Option<String>,
+
+    #[arg(short = 'L', long, global = true)]
+    lang: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -22,76 +23,58 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// 检查手机硬件型号、内核版本并评估 CVE-2026-43499 门禁
     Check,
 
-    /// 拉取远程载荷目录并比对当前设备的可用载荷
     Catalog {
-        /// 自定义远程 devices.json 目录 URL（支持自建镜像或私有源）
         #[arg(long)]
         catalog_url: Option<String>,
     },
 
-    /// 执行免解锁提权并加载 KernelSU
     Run {
-        /// 自定义本地 preload.so 载荷路径（忽略远程目录）
         #[arg(short, long)]
         payload: Option<PathBuf>,
 
-        /// 自定义远程 devices.json 目录 URL（支持自建镜像或私有源）
         #[arg(long)]
         catalog_url: Option<String>,
 
-        /// 指定加载的 KernelSU 变体 (sukisu, kernelsu, next, resukisu)
         #[arg(short, long, default_value = "sukisu")]
         ksu: String,
 
-        /// 仅获取临时 Root，跳过 KernelSU LKM 驱动加载
         #[arg(long, default_value_t = false)]
         skip_ksu: bool,
 
-        /// 最大重试次数
         #[arg(long, default_value_t = 3)]
         attempts: u32,
 
-        /// 重试间隔等待秒数
         #[arg(long, default_value_t = 8)]
         delay: u64,
 
-        /// 是否保存运行历史记录
         #[arg(long, default_value_t = true)]
         save_history: bool,
 
-        /// 执行前先重启手机，确保在全新的干净状态（pristine boot_id）下运行
         #[arg(long, default_value_t = false)]
         reboot_first: bool,
 
-        /// 跳过载荷身份闸门，强制下发该载荷（明知载荷与设备不匹配时使用）
         #[arg(long, default_value_t = false)]
         force_payload: bool,
 
-        /// 本地载荷库目录（可重复指定），身份闸门失败时按本机内核指纹在此回退配对
         #[arg(long = "payload-dir", value_name = "DIR")]
         payload_dirs: Vec<PathBuf>,
 
-        /// 只解析并校验载荷，不下发、不执行
         #[arg(long, default_value_t = false)]
         dry_run: bool,
 
 
-        /// PC 本地提供的 KernelSU/SukiSU 管理器 APK 路径（用于免预装就地提取 ksud）
+
         #[arg(long = "manager-apk", value_name = "APK_PATH")]
         manager_apk: Option<PathBuf>,
     },
 
-    /// 清理手机端的临时运行文件与日志
     Clean {
-        /// 是否执行深度清理（彻底删除残留 socket、旧 su 守护进程、缓存等）
         #[arg(long, default_value_t = false)]
         deep: bool,
     },
 
-    /// 查看或管理本地提权运行历史记录
     History {
         #[command(subcommand)]
         action: Option<HistoryAction>,
@@ -100,15 +83,74 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum HistoryAction {
-    /// 列出所有历史运行记录
     List,
-    /// 清除所有历史运行记录
     Clear,
+}
+
+fn early_detect_language() -> Language {
+    let args: Vec<String> = std::env::args().collect();
+    for i in 0..args.len() {
+        if (args[i] == "-L" || args[i] == "--lang") && i + 1 < args.len() {
+            return Language::from_code(&args[i + 1]);
+        }
+        if let Some(rest) = args[i].strip_prefix("--lang=") {
+            return Language::from_code(rest);
+        }
+    }
+    Language::detect_system()
+}
+
+fn localize_command(cmd: clap::Command) -> clap::Command {
+    cmd.about(t!("cli.app_about").to_string())
+        .long_about(t!("cli.app_long_about").to_string())
+        .mut_arg("serial", |a| a.help(t!("cli.arg_serial").to_string()))
+        .mut_arg("lang", |a| a.help(t!("cli.arg_lang").to_string()))
+        .mut_subcommand("check", |sc| sc.about(t!("cli.check_about").to_string()))
+        .mut_subcommand("catalog", |sc| {
+            sc.about(t!("cli.catalog_about").to_string())
+                .mut_arg("catalog_url", |a| a.help(t!("cli.arg_catalog_url").to_string()))
+        })
+        .mut_subcommand("run", |sc| {
+            sc.about(t!("cli.run_about").to_string())
+                .mut_arg("payload", |a| a.help(t!("cli.arg_payload").to_string()))
+                .mut_arg("catalog_url", |a| a.help(t!("cli.arg_catalog_url").to_string()))
+                .mut_arg("ksu", |a| a.help(t!("cli.arg_ksu").to_string()))
+                .mut_arg("skip_ksu", |a| a.help(t!("cli.arg_skip_ksu").to_string()))
+                .mut_arg("attempts", |a| a.help(t!("cli.arg_attempts").to_string()))
+                .mut_arg("delay", |a| a.help(t!("cli.arg_delay").to_string()))
+                .mut_arg("save_history", |a| a.help(t!("cli.arg_save_history").to_string()))
+                .mut_arg("reboot_first", |a| a.help(t!("cli.arg_reboot_first").to_string()))
+                .mut_arg("force_payload", |a| a.help(t!("cli.arg_force_payload").to_string()))
+                .mut_arg("payload_dirs", |a| a.help(t!("cli.arg_payload_dir").to_string()))
+                .mut_arg("dry_run", |a| a.help(t!("cli.arg_dry_run").to_string()))
+                .mut_arg("manager_apk", |a| a.help(t!("cli.arg_manager_apk").to_string()))
+        })
+        .mut_subcommand("clean", |sc| {
+            sc.about(t!("cli.clean_about").to_string())
+                .mut_arg("deep", |a| a.help(t!("cli.arg_deep").to_string()))
+        })
+        .mut_subcommand("history", |sc| {
+            sc.about(t!("cli.history_about").to_string())
+                .mut_subcommand("list", |s| s.about(t!("cli.history_list_about").to_string()))
+                .mut_subcommand("clear", |s| s.about(t!("cli.history_clear_about").to_string()))
+        })
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let initial_lang = early_detect_language();
+    set_current_language(initial_lang);
+    rust_i18n::set_locale(initial_lang.code());
+
+    let cmd = localize_command(Cli::command());
+    let matches = cmd.get_matches();
+    let cli = Cli::from_arg_matches(&matches)?;
+
+    if let Some(l) = &cli.lang {
+        let selected = Language::from_code(l);
+        set_current_language(selected);
+        rust_i18n::set_locale(selected.code());
+    }
 
     match cli.command {
         Commands::Check => commands::run_check(cli.serial).await?,

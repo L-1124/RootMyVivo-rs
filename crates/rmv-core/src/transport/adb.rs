@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use async_trait::async_trait;
 use std::path::Path;
 use std::time::Duration;
@@ -15,11 +16,11 @@ async fn run_cmd_with_timeout(
 ) -> Result<std::process::Output> {
     match timeout(dur, cmd.output()).await {
         Ok(res) => res.map_err(|e| RmvError::Adb {
-            message: format!("调用 adb {} 失败: {}", action_desc, e),
+            message: t!("error.adb_failed", action = action_desc, error = e.to_string()).to_string(),
             code: None,
         }),
         Err(_) => Err(RmvError::Adb {
-            message: format!("调用 adb {} 超时 (超过 {} 秒)", action_desc, dur.as_secs()),
+            message: t!("error.adb_timeout", action = action_desc, seconds = dur.as_secs().to_string()).to_string(),
             code: None,
         }),
     }
@@ -45,10 +46,7 @@ impl AdbCliTransport {
             Ok(Self::new(Some(devices[0].clone())))
         } else if devices.len() > 1 {
             Err(RmvError::Adb {
-                message: format!(
-                    "检测到多台在线 ADB 设备 ({})，请使用 -s 参数指定目标",
-                    devices.join(", ")
-                ),
+                message: t!("error.multiple_devices", devices = devices.join(", ")).to_string(),
                 code: None,
             })
         } else {
@@ -112,10 +110,7 @@ impl Transport for AdbCliTransport {
 
         if !output.status.success() {
             return Err(RmvError::Adb {
-                message: format!(
-                    "adb push 失败: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
+                message: t!("error.adb_cmd_failed", action = "push", error = String::from_utf8_lossy(&output.stderr).trim()).to_string(),
                 code: output.status.code(),
             });
         }
@@ -130,10 +125,7 @@ impl Transport for AdbCliTransport {
 
         if !output.status.success() {
             return Err(RmvError::Adb {
-                message: format!(
-                    "adb pull 失败: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
+                message: t!("error.adb_cmd_failed", action = "pull", error = String::from_utf8_lossy(&output.stderr).trim()).to_string(),
                 code: output.status.code(),
             });
         }
@@ -155,7 +147,7 @@ impl Transport for AdbCliTransport {
     async fn get_device_info(&self) -> Result<DeviceInfo> {
         if !self.is_alive().await {
             return Err(RmvError::DeviceNotFound(
-                "设备处于离线状态或未授权，请检查手机屏幕上的 USB 调试授权提示".to_string(),
+                t!("error.device_offline").to_string(),
             ));
         }
 
@@ -166,7 +158,7 @@ impl Transport for AdbCliTransport {
         let (_, boot_id) = self.exec("cat /proc/sys/kernel/random/boot_id").await?;
 
         if proc_ver.trim().is_empty() || proc_ver.contains("device offline") {
-            return Err(RmvError::DeviceNotFound("无法读取设备 /proc/version".to_string()));
+            return Err(RmvError::DeviceNotFound(t!("error.cannot_read_proc_version").to_string()));
         }
 
         DeviceInfo::parse(
@@ -185,10 +177,7 @@ impl Transport for AdbCliTransport {
 
         if !output.status.success() {
             return Err(RmvError::Adb {
-                message: format!(
-                    "adb reboot 失败: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
+                message: t!("error.adb_cmd_failed", action = "reboot", error = String::from_utf8_lossy(&output.stderr).trim()).to_string(),
                 code: output.status.code(),
             });
         }
@@ -213,7 +202,7 @@ impl Transport for AdbCliTransport {
         }
 
         Err(RmvError::Adb {
-            message: format!("重启后等待设备就绪超时（超过 {} 秒）", timeout_sec),
+            message: t!("error.reboot_timeout", seconds = timeout_sec.to_string()).to_string(),
             code: None,
         })
     }

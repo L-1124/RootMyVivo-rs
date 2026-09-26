@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use reqwest::Client;
@@ -82,17 +83,17 @@ impl ExploitEngine {
             phase: Phase::DeviceCheck,
             index: 1,
             total: total_steps,
-            desc: "连接并检测设备硬件指纹与内核构建信息".to_string(),
+            desc: t!("phase.device_check").to_string(),
         });
         if options.reboot_first {
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Info,
-                line: "正在重启设备以获取全新的启动状态 (pristine boot_id)...".to_string(),
+                line: t!("log.reboot_pristine").to_string(),
             });
             transport.reboot_and_wait(120).await?;
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
-                line: "设备已重启完成并重新连接就绪".to_string(),
+                line: t!("log.reboot_done").to_string(),
             });
         }
 
@@ -100,26 +101,26 @@ impl ExploitEngine {
         let device = transport.get_device_info().await?;
         let _ = event_tx.send(EngineEvent::Log {
             level: LogLevel::Ok,
-            line: format!(
-                "设备: {} ({}), 品牌: {}, 内核构建: {}",
-                device.model,
-                device.device,
-                device.brand,
-                device.gki_git_id.as_deref().unwrap_or("未知GKI")
-            ),
+            line: t!(
+                "log.device_info",
+                model = &device.model,
+                device = &device.device,
+                brand = &device.brand,
+                kernel = device.gki_git_id.as_deref().unwrap_or("-")
+            ).to_string(),
         });
 
         match device.evaluate_gate() {
             GateStatus::Vulnerable => {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Ok,
-                    line: "安全门禁通过: 内核未修补 CVE-2026-43499，处于可利用窗口".to_string(),
+                    line: t!("log.gate_passed").to_string(),
                 });
             }
             GateStatus::Patched { version, reason } => {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Error,
-                    line: format!("门禁拦截: {} ({})", version, reason),
+                    line: t!("log.gate_blocked_patched", version = &version, reason = &reason).to_string(),
                 });
                 let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                 return Err(RmvError::UnsupportedKernel { version, reason });
@@ -127,12 +128,12 @@ impl ExploitEngine {
             GateStatus::UnsupportedVersion(v) => {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Error,
-                    line: format!("门禁拦截: 不受支持的内核版本 {}", v),
+                    line: t!("log.gate_blocked_unsupported", version = &v).to_string(),
                 });
                 let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                 return Err(RmvError::UnsupportedKernel {
                     version: v,
-                    reason: "内核主次版本不在 CVE-2026-43499 目标范围".to_string(),
+                    reason: t!("gate.unsupported_version").to_string(),
                 });
             }
         }
@@ -144,11 +145,11 @@ impl ExploitEngine {
                 phase: Phase::Catalog,
                 index: 2,
                 total: total_steps,
-                desc: format!("加载用户自定义载荷: {}", custom.display()),
+                desc: t!("log.custom_payload", path = custom.display().to_string()).to_string(),
             });
 
             if !custom.exists() {
-                let err_msg = format!("指定的本地载荷文件不存在: {}", custom.display());
+                let err_msg = t!("error.payload_not_found", device = "local", kernel = custom.display().to_string()).to_string();
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Error,
                     line: err_msg.clone(),
@@ -161,7 +162,7 @@ impl ExploitEngine {
                 phase: Phase::Catalog,
                 index: 2,
                 total: total_steps,
-                desc: "从在线目录 devices.json 检索精确匹配载荷".to_string(),
+                desc: t!("log.catalog_search").to_string(),
             });
 
             let catalog = CatalogV5::fetch_with_url(&self.client, options.custom_catalog_url.as_deref()).await?;
@@ -183,7 +184,7 @@ impl ExploitEngine {
 
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
-                line: format!("找到匹配载荷: {} ({} 字节)", file_info.name, file_info.size),
+                line: t!("log.matched_payload", name = &file_info.name, size = file_info.size.to_string()).to_string(),
             });
 
             // 步骤 3: 载荷下载与哈希校验
@@ -191,7 +192,7 @@ impl ExploitEngine {
                 phase: Phase::Download,
                 index: 3,
                 total: total_steps,
-                desc: format!("下载并校验载荷文件 {}", file_info.name),
+                desc: t!("log.download_verify", name = &file_info.name).to_string(),
             });
 
             tokio::fs::create_dir_all(&self.work_dir).await?;
@@ -201,7 +202,7 @@ impl ExploitEngine {
 
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
-                line: "载荷文件 SHA-256 校验一致".to_string(),
+                line: t!("log.hash_ok").to_string(),
             });
 
             target_file
@@ -217,7 +218,7 @@ impl ExploitEngine {
             {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Warn,
-                    line: format!("当前载荷与设备不匹配，改用本地载荷库: {}", local.display()),
+                    line: t!("log.fallback_local", path = local.display().to_string()).to_string(),
                 });
                 payload_local_path = local;
                 gate = verify_payload_file(&payload_local_path, &device);
@@ -228,23 +229,13 @@ impl ExploitEngine {
             Ok(identity) if identity.has_device_fingerprint => {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Ok,
-                    line: format!(
-                        "载荷身份校验通过: 内嵌本机内核指纹 {}",
-                        device.abogki_fingerprint.as_deref().unwrap_or("-")
-                    ),
+                    line: t!("log.gate_verified", fingerprint = device.abogki_fingerprint.as_deref().unwrap_or("-")).to_string(),
                 });
             }
             Ok(identity) => {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Error,
-                    line: format!(
-                        "载荷未内嵌本机内核指纹，无法自证身份 (标签: {})",
-                        if identity.labels.is_empty() {
-                            "无".to_string()
-                        } else {
-                            identity.labels.join(", ")
-                        }
-                    ),
+                    line: t!("log.gate_mismatch", labels = if identity.labels.is_empty() { "-".to_string() } else { identity.labels.join(", ") }).to_string(),
                 });
                 if !options.force_payload {
                     let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
@@ -259,13 +250,13 @@ impl ExploitEngine {
                 }
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Warn,
-                    line: "已指定 --force-payload，忽略身份闸门继续下发".to_string(),
+                    line: t!("log.force_payload_warn").to_string(),
                 });
             }
             Err(e) => {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Error,
-                    line: format!("载荷身份闸门拦截: {}", e),
+                    line: e.to_string(),
                 });
                 if !options.force_payload {
                     let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
@@ -273,7 +264,7 @@ impl ExploitEngine {
                 }
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Warn,
-                    line: "已指定 --force-payload，忽略身份闸门继续下发".to_string(),
+                    line: t!("log.force_payload_warn").to_string(),
                 });
             }
         }
@@ -281,15 +272,12 @@ impl ExploitEngine {
         if options.dry_run {
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
-                line: format!("dry-run: 校验完成，将下发的载荷为 {}", payload_local_path.display()),
+                line: t!("log.dry_run_done", path = payload_local_path.display().to_string()).to_string(),
             });
             let _ = event_tx.send(EngineEvent::Status(EngineStatus::Success));
             let _ = event_tx.send(EngineEvent::Completed {
                 success: true,
-                message: format!(
-                    "dry-run 完成，未向设备下发任何文件；载荷: {}",
-                    payload_local_path.display()
-                ),
+                message: t!("log.dry_run_complete_msg", path = payload_local_path.display().to_string()).to_string(),
             });
             return Ok(());
         }
@@ -299,7 +287,7 @@ impl ExploitEngine {
             phase: Phase::Deploy,
             index: if options.custom_payload.is_some() { 2 } else { 3 },
             total: total_steps,
-            desc: "将提权载荷部署至手机 /data/local/tmp/rmv".to_string(),
+            desc: t!("log.deploy_so").to_string(),
         });
 
         let remote_dir = "/data/local/tmp/rmv";
@@ -315,7 +303,7 @@ impl ExploitEngine {
             phase: Phase::Exploit,
             index: if options.custom_payload.is_some() { 3 } else { 4 },
             total: total_steps,
-            desc: "在后台拉起 LD_PRELOAD 提权进程并实时探针".to_string(),
+            desc: t!("log.exploit_start").to_string(),
         });
 
         // 检查是否已拥有 root
@@ -325,7 +313,7 @@ impl ExploitEngine {
         if is_rooted {
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
-                line: "检测到系统中已具备 Root 权限".to_string(),
+                line: t!("log.root_already").to_string(),
             });
         } else {
             let run_cmd = format!(
@@ -419,7 +407,7 @@ impl ExploitEngine {
 
         let _ = event_tx.send(EngineEvent::Log {
             level: LogLevel::Ok,
-            line: "成功取得 UID=0 (Root 权限就绪)".to_string(),
+            line: t!("log.uid0_ok").to_string(),
         });
 
         // 步骤: KernelSU Late-Load
@@ -429,14 +417,14 @@ impl ExploitEngine {
                 phase: Phase::Ksu,
                 index: ksu_step,
                 total: total_steps,
-                desc: format!("加载 {} 内核驱动", options.ksu_variant.display_name()),
+                desc: t!("log.ksu_start", name = options.ksu_variant.display_name()).to_string(),
             });
 
             let host_apk = options.manager_apk.as_deref();
             KsuOrchestrator::late_load(transport, options.ksu_variant, None, host_apk).await?;
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
-                line: format!("{} 驱动加载成功 (Live)", options.ksu_variant.display_name()),
+                line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),
             });
         }
 
@@ -446,20 +434,20 @@ impl ExploitEngine {
             phase: Phase::Persistence,
             index: persist_step,
             total: total_steps,
-            desc: "固化 ADB TCP 5555 端口与本地认证密钥".to_string(),
+            desc: t!("log.persist_start").to_string(),
         });
 
         let persisted = Persistence::setup_adb_tcp(transport).await?;
         if persisted {
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
-                line: "已固化本地 TCP 5555 通道".to_string(),
+                line: t!("log.persist_ok").to_string(),
             });
         }
         // 清理设备端临时痕迹
         let _ = Persistence::clean_traces(transport, false).await;
 
-        let success_msg = "Root 获取与环境编排全部完成！".to_string();
+        let success_msg = t!("log.finished").to_string();
         let _ = event_tx.send(EngineEvent::Status(EngineStatus::Success));
         let _ = event_tx.send(EngineEvent::Completed {
             success: true,

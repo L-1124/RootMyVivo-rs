@@ -13,16 +13,16 @@ pub enum Phase {
 }
 
 impl Phase {
-    pub fn display_name(&self) -> &'static str {
+    pub fn display_name(&self) -> String {
         match self {
-            Self::DeviceCheck => "设备环境与安全门禁检测",
-            Self::Catalog => "载荷编目检索",
-            Self::Download => "载荷下载与校验",
-            Self::Deploy => "推送载荷至设备",
-            Self::Exploit => "执行提权注入",
-            Self::Persistence => "本地持久化连接配置",
-            Self::Ksu => "KernelSU 模块加载",
-            Self::Finished => "完成",
+            Self::DeviceCheck => rust_i18n::t!("phase.device_check").to_string(),
+            Self::Catalog => rust_i18n::t!("phase.catalog").to_string(),
+            Self::Download => rust_i18n::t!("phase.download").to_string(),
+            Self::Deploy => rust_i18n::t!("phase.deploy").to_string(),
+            Self::Exploit => rust_i18n::t!("phase.exploit").to_string(),
+            Self::Persistence => rust_i18n::t!("phase.persistence").to_string(),
+            Self::Ksu => rust_i18n::t!("phase.ksu").to_string(),
+            Self::Finished => rust_i18n::t!("phase.finished").to_string(),
         }
     }
 }

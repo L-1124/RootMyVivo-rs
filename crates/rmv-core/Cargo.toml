@@ -17,3 +17,5 @@ regex.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
+rust-i18n.workspace = true
+sys-locale.workspace = true

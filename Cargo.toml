@@ -28,3 +28,5 @@ clap = { version = "4.5", features = ["derive", "cargo"] }
 indicatif = { version = "0.17", features = ["tokio"] }
 colored = "3.0"
 anyhow = "1.0"
+rust-i18n = "3"
+sys-locale = "0.3"

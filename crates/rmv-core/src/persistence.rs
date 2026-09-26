@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use std::path::PathBuf;
 use tokio::fs;
 use crate::error::{Result, RmvError};
@@ -72,10 +73,9 @@ impl Persistence {
 
         let (code, out) = transport.exec(script).await?;
         if code != 0 {
-            return Err(RmvError::ExploitFailed(format!(
-                "清理临时痕迹失败: {}",
-                out.trim()
-            )));
+            return Err(RmvError::ExploitFailed(
+                t!("error.clean_traces_failed", error = out.trim()).to_string(),
+            ));
         }
         Ok(CleanOutcome::ShellOnly)
     }

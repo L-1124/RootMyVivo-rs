@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -133,10 +134,10 @@ impl KsuOrchestrator {
             }
         }
 
-        Err(RmvError::KsuFailed(format!(
-            "无法在设备上定位或提取 ksud，请确认手机已安装 {} 或通过 --manager-apk 提供安装包",
-            variant.display_name()
-        )))
+        Err(RmvError::KsuFailed(t!(
+            "error.cannot_extract_ksud",
+            name = variant.display_name()
+        ).to_string()))
     }
 
     pub async fn late_load<T: Transport>(
@@ -166,11 +167,11 @@ impl KsuOrchestrator {
         );
         let (code, out) = transport.exec(&cmd).await?;
         if code != 0 && !out.contains("already loaded") {
-            return Err(RmvError::KsuFailed(format!(
-                "执行 late-load 失败 (code {}): {}",
-                code,
-                out.trim()
-            )));
+            return Err(RmvError::KsuFailed(t!(
+                "error.late_load_failed",
+                code = code.to_string(),
+                error = out.trim()
+            ).to_string()));
         }
 
         let mut loaded = false;
@@ -183,9 +184,7 @@ impl KsuOrchestrator {
         }
 
         if !loaded {
-            return Err(RmvError::KsuFailed(
-                "late-load 命令执行完毕，但 /proc/modules 中未检测到 kernelsu 模块".to_string(),
-            ));
+            return Err(RmvError::KsuFailed(t!("error.ksu_module_not_detected").to_string()));
         }
 
         Self::apply_su_wrapper_fix(transport).await?;

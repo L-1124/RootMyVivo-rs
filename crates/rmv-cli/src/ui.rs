@@ -1,6 +1,7 @@
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use rmv_core::{EngineEvent, EngineStatus, LogLevel};
+use rust_i18n::t;
 
 pub struct CliUi {
     spinner: ProgressBar,
@@ -70,14 +71,16 @@ impl CliUi {
                 if let Some(pb) = &self.download_bar {
                     pb.set_position(downloaded);
                     if downloaded >= total && total > 0 {
-                        pb.finish_with_message(format!("{} 下载完成", filename));
+                        let done_msg = t!("cli.download_done", filename = filename);
+                        pb.finish_with_message(done_msg);
                         self.download_bar = None;
                     }
                 }
             }
             EngineEvent::ExploitLive { lines, .. } => {
                 if let Some(last_line) = lines.last() {
-                    self.spinner.set_message(format!("提权运行中: {}", last_line.dimmed()));
+                    let msg = t!("cli.exploit_running", line = last_line.dimmed().to_string());
+                    self.spinner.set_message(msg);
                 }
             }
             EngineEvent::Status(status) => match status {
