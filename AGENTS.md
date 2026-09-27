@@ -102,7 +102,7 @@ cargo run --bin rmv -- run -p /path/to/preload.so --dry-run
 cargo run --bin rmv -- clean -t cli
 ```
 
-`rmv clean` always runs the full sweep: it removes `/data/local/tmp/rmv` (payload, `ksud`, `live.log`, `DONE`) plus legacy payload residue at the tmp root (`preload.so`, `su`, `temp_su.sock`, `su_daemon.log`, `exploit_run.log`), `/data/adb/rmv`, and any stale `su --daemon`. It never touches `/apex/com.android.virt/bin/su`, `/system/bin/su`, KSU modules, or third-party entries under `/data/local/tmp` — the `chown` is **non-recursive** on purpose, and the `su --daemon` match uses the `[s]u` bracket trick so `pkill` cannot kill the shell running it.
+`rmv clean` always runs the full sweep: it unmounts the injection-time tmpfs overlays on `/apex/com.android.virt/bin` (loop capped at 4 attempts, restoring the stock AVF binaries so bare `su` falls back to `/system/bin/su`), removes `/data/local/tmp/rmv` (payload, `ksud`, `live.log`, `DONE`) plus legacy payload residue at the tmp root (`preload.so`, `su`, `temp_su.sock`, `su_daemon.log`, `exploit_run.log`), `/data/adb/rmv`, and any stale `su --daemon`. It never touches `/system/bin/su`, KSU modules, or third-party entries under `/data/local/tmp` — the `chown` is **non-recursive** on purpose, and the `su --daemon` match uses the `[s]u` bracket trick so `pkill` cannot kill the shell running it.
 
 ---
 

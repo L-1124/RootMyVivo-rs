@@ -11,10 +11,16 @@ pub enum CleanOutcome {
     ShellOnly,
 }
 
-/// 清理脚本：清掉注入残留（su 客户端、socket、daemon 日志）与模块缓存。
+/// 清理脚本：清掉注入残留（su 客户端、socket、daemon 日志）与模块缓存，
+/// 并解除 `/apex/com.android.virt/bin` 上注入期叠加的 tmpfs 覆盖挂载（恢复原厂 AVF 组件）。
 /// 不含单引号，可直接执行，也可包进 su -c。
+/// AVF 覆盖最多 2 层，循环上限 4 次兜底，避免 umount 失效时空转。
 /// chown 刻意不加 -R：递归会把 /data/local/tmp 下第三方 App 的文件属主一并改掉。
-const CLEAN: &str = "rm -rf /data/local/tmp/rmv /data/local/tmp/ota /data/local/tmp/live.log \
+const CLEAN: &str = "for n in 1 2 3 4; do \
+                       mount | grep -q \"tmpfs on /apex/com.android.virt/bin\" || break; \
+                       umount /apex/com.android.virt/bin 2>/dev/null || break; \
+                     done; \
+                     rm -rf /data/local/tmp/rmv /data/local/tmp/ota /data/local/tmp/live.log \
                      /data/local/tmp/DONE /data/local/tmp/preload.so /data/local/tmp/su \
                      /data/local/tmp/temp_su.sock /data/local/tmp/su_daemon.log \
                      /data/local/tmp/exploit_run.log /data/adb/rmv 2>/dev/null; \
