@@ -18,6 +18,8 @@ struct Cli {
     #[arg(short = 'L', long, global = true)]
     lang: Option<String>,
 
+    #[arg(short = 't', long, global = true, default_value = "auto")]
+    transport: String,
     #[command(subcommand)]
     command: Commands,
 }
@@ -132,6 +134,7 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
         .subcommand(clap::Command::new("help").about(t!("cli.help_subcmd").to_string()))
         .mut_arg("serial", |a| a.help(t!("cli.arg_serial").to_string()))
         .mut_arg("lang", |a| a.help(t!("cli.arg_lang").to_string()))
+        .mut_arg("transport", |a| a.help(t!("cli.arg_transport").to_string()))
         .mut_subcommand("check", |sc| sc.about(t!("cli.check_about").to_string()))
         .mut_subcommand("catalog", |sc| {
             sc.about(t!("cli.catalog_about").to_string())
@@ -209,9 +212,13 @@ async fn main() {
         rust_i18n::set_locale(selected.code());
     }
 
+    let transport_mode = rmv_core::TransportMode::from_str_opt(Some(&cli.transport));
+
     let result = match cli.command {
-        Commands::Check => commands::run_check(cli.serial).await,
-        Commands::Catalog { catalog_url } => commands::run_catalog(cli.serial, catalog_url).await,
+        Commands::Check => commands::run_check(cli.serial, transport_mode).await,
+        Commands::Catalog { catalog_url } => {
+            commands::run_catalog(cli.serial, catalog_url, transport_mode).await
+        }
         Commands::Run {
             payload,
             catalog_url,
@@ -242,10 +249,11 @@ async fn main() {
                 dry_run,
                 manager_apk,
                 timeout,
+                transport_mode,
             )
             .await
         }
-        Commands::Clean { deep } => commands::run_clean(cli.serial, deep).await,
+        Commands::Clean { deep } => commands::run_clean(cli.serial, deep, transport_mode).await,
         Commands::History { action } => match action.unwrap_or(HistoryAction::List { limit: 15 }) {
             HistoryAction::List { limit } => commands::run_history_list(limit).await,
             HistoryAction::Show { id } => commands::run_history_show(&id).await,

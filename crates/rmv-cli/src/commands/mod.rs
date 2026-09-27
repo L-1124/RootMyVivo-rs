@@ -2,16 +2,16 @@ use crate::ui::CliUi;
 use anyhow::{Context, Result};
 use colored::*;
 use rmv_core::{
-    AdbCliTransport, CatalogV5, CleanOutcome, EngineOptions, ExploitEngine, GateStatus,
-    HistoryManager, KsuVariant, Persistence, Transport,
+    CatalogV5, CleanOutcome, EngineOptions, ExploitEngine, GateStatus, HistoryManager, KsuVariant,
+    Persistence, Transport, TransportBuilder, TransportMode,
 };
 use rust_i18n::t;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 
-pub async fn run_check(serial: Option<String>) -> Result<()> {
+pub async fn run_check(serial: Option<String>, mode: TransportMode) -> Result<()> {
     println!("{}", t!("cli.probing_device").bold().cyan());
-    let transport = AdbCliTransport::resolve(serial).await?;
+    let transport = TransportBuilder::resolve(serial, mode).await?;
     let dev = transport
         .get_device_info()
         .await
@@ -83,7 +83,11 @@ pub async fn run_check(serial: Option<String>) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_catalog(serial: Option<String>, catalog_url: Option<String>) -> Result<()> {
+pub async fn run_catalog(
+    serial: Option<String>,
+    catalog_url: Option<String>,
+    mode: TransportMode,
+) -> Result<()> {
     println!("{}", t!("cli.catalog_fetching").bold().cyan());
     let catalog = CatalogV5::fetch_default_with_url(catalog_url.as_deref())
         .await
@@ -98,36 +102,37 @@ pub async fn run_catalog(serial: Option<String>, catalog_url: Option<String>) ->
         )
     );
 
-    let transport = AdbCliTransport::resolve(serial)
-        .await
-        .unwrap_or_else(|_| AdbCliTransport::new(None));
-    if let Ok(dev) = transport.get_device_info().await {
-        println!("{}", t!("cli.matching_device").bold().cyan());
-        match catalog.match_payload(&dev) {
-            Some((device_entry, kernel_build)) => {
-                println!(
-                    "  {} : {}",
-                    t!("cli.matched_device"),
-                    device_entry.market_name.bold().green()
-                );
-                println!(
-                    "  {} : {}",
-                    t!("cli.payload_status"),
-                    kernel_build.status.bold().yellow()
-                );
-                if let Some(file) = &kernel_build.file {
+    if let Ok(transport) = TransportBuilder::resolve(serial, mode).await {
+        if let Ok(dev) = transport.get_device_info().await {
+            println!("{}", t!("cli.matching_device").bold().cyan());
+            match catalog.match_payload(&dev) {
+                Some((device_entry, kernel_build)) => {
                     println!(
-                        "  {} : {} ({} bytes)",
-                        t!("cli.payload_file"),
-                        file.name.green(),
-                        file.size
+                        "  {} : {}",
+                        t!("cli.matched_device"),
+                        device_entry.market_name.bold().green()
                     );
-                    println!("  {} : {}", t!("cli.download_url"), file.url.dimmed());
+                    println!(
+                        "  {} : {}",
+                        t!("cli.payload_status"),
+                        kernel_build.status.bold().yellow()
+                    );
+                    if let Some(file) = &kernel_build.file {
+                        println!(
+                            "  {} : {} ({} bytes)",
+                            t!("cli.payload_file"),
+                            file.name.green(),
+                            file.size
+                        );
+                        println!("  {} : {}", t!("cli.download_url"), file.url.dimmed());
+                    }
+                }
+                None => {
+                    println!("  {}", t!("cli.no_payload_matched").yellow());
                 }
             }
-            None => {
-                println!("  {}", t!("cli.no_payload_matched").yellow());
-            }
+        } else {
+            println!("{}", t!("cli.no_device_connected").dimmed());
         }
     } else {
         println!("{}", t!("cli.no_device_connected").dimmed());
@@ -151,8 +156,9 @@ pub async fn run_exploit(
     dry_run: bool,
     manager_apk: Option<PathBuf>,
     timeout_secs: u64,
+    mode: TransportMode,
 ) -> Result<()> {
-    let transport = AdbCliTransport::resolve(serial).await?;
+    let transport = TransportBuilder::resolve(serial, mode).await?;
     let ksu_variant = KsuVariant::from_id(&ksu);
 
     let options = EngineOptions {
@@ -190,14 +196,14 @@ pub async fn run_exploit(
     res.map_err(Into::into)
 }
 
-pub async fn run_clean(serial: Option<String>, deep: bool) -> Result<()> {
+pub async fn run_clean(serial: Option<String>, deep: bool, mode: TransportMode) -> Result<()> {
     let start_msg = if deep {
         t!("cli.cleaning_traces_deep")
     } else {
         t!("cli.cleaning_traces")
     };
     println!("{} {}", "[ .. ]".cyan(), start_msg);
-    let transport = AdbCliTransport::resolve(serial).await?;
+    let transport = TransportBuilder::resolve(serial, mode).await?;
     let outcome = Persistence::clean_traces(&transport, deep)
         .await
         .context(t!("error.exploit_failed", message = "clean"))?;

@@ -132,6 +132,7 @@
     "history_record_title": "Run Record",
     "history_logs_title": "Execution Logs",
     "arg_history_limit": "Maximum number of records to display",
-    "arg_history_id": "Record ID or prefix"
+    "arg_history_id": "Record ID or prefix",
+    "arg_transport": "Transport backend: auto (direct USB first, fallback to ADB CLI), usb, cli"
   }
 }

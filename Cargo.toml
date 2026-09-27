@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/rmv-core",
     "crates/rmv-cli",
+    "crates/rmv-wasm",
 ]
 
 [workspace.package]
@@ -30,3 +31,5 @@ colored = "3.0"
 anyhow = "1.0"
 rust-i18n = "3"
 sys-locale = "0.3"
+webadb-rs = { git = "https://github.com/IsMyPhonePwned/webadb-rs", default-features = false }
+nusb = "0.1"

@@ -132,6 +132,7 @@
     "history_record_title": "运行记录",
     "history_logs_title": "运行日志",
     "arg_history_limit": "最大显示条数",
-    "arg_history_id": "记录 ID 或前缀"
+    "arg_history_id": "记录 ID 或前缀",
+    "arg_transport": "传输方式：auto（优先原生USB，被占回退ADB命令行）、usb（纯原生USB）、cli（传统ADB命令行）"
   }
 }

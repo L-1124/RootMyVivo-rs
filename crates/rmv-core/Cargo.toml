@@ -7,8 +7,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-tokio.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -18,4 +16,16 @@ async-trait.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
 rust-i18n.workspace = true
-sys-locale.workspace = true
+webadb-rs = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.43", features = ["full"] }
+reqwest = { workspace = true }
+sys-locale = { workspace = true }
+nusb = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.43", default-features = false, features = ["sync", "macros"] }
+[features]
+default = ["native-usb"]
+native-usb = ["dep:nusb"]

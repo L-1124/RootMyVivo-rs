@@ -29,6 +29,7 @@ impl Language {
             return Self::from_code(&val);
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(locale) = sys_locale::get_locale() {
             let lower = locale.to_lowercase();
             if lower.starts_with("zh") || lower.contains("chinese") {

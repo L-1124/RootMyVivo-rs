@@ -1,13 +1,13 @@
-use rust_i18n::t;
 use async_trait::async_trait;
+use rust_i18n::t;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use super::Transport;
 use crate::device::DeviceInfo;
 use crate::error::{Result, RmvError};
-use super::Transport;
 
 async fn run_cmd_with_timeout(
     mut cmd: Command,
@@ -16,11 +16,21 @@ async fn run_cmd_with_timeout(
 ) -> Result<std::process::Output> {
     match timeout(dur, cmd.output()).await {
         Ok(res) => res.map_err(|e| RmvError::Adb {
-            message: t!("error.adb_failed", action = action_desc, error = e.to_string()).to_string(),
+            message: t!(
+                "error.adb_failed",
+                action = action_desc,
+                error = e.to_string()
+            )
+            .to_string(),
             code: None,
         }),
         Err(_) => Err(RmvError::Adb {
-            message: t!("error.adb_timeout", action = action_desc, seconds = dur.as_secs().to_string()).to_string(),
+            message: t!(
+                "error.adb_timeout",
+                action = action_desc,
+                seconds = dur.as_secs().to_string()
+            )
+            .to_string(),
             code: None,
         }),
     }
@@ -110,7 +120,12 @@ impl Transport for AdbCliTransport {
 
         if !output.status.success() {
             return Err(RmvError::Adb {
-                message: t!("error.adb_cmd_failed", action = "push", error = String::from_utf8_lossy(&output.stderr).trim()).to_string(),
+                message: t!(
+                    "error.adb_cmd_failed",
+                    action = "push",
+                    error = String::from_utf8_lossy(&output.stderr).trim()
+                )
+                .to_string(),
                 code: output.status.code(),
             });
         }
@@ -125,11 +140,50 @@ impl Transport for AdbCliTransport {
 
         if !output.status.success() {
             return Err(RmvError::Adb {
-                message: t!("error.adb_cmd_failed", action = "pull", error = String::from_utf8_lossy(&output.stderr).trim()).to_string(),
+                message: t!(
+                    "error.adb_cmd_failed",
+                    action = "pull",
+                    error = String::from_utf8_lossy(&output.stderr).trim()
+                )
+                .to_string(),
                 code: output.status.code(),
             });
         }
         Ok(())
+    }
+    async fn push_bytes(&self, data: &[u8], remote_path: &str, mode: u32) -> Result<()> {
+        let temp_dir = std::env::temp_dir().join("rmv-push-tmp");
+        tokio::fs::create_dir_all(&temp_dir).await.ok();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let file_name = format!("push_{}_{}", std::process::id(), nanos);
+        let temp_file = temp_dir.join(file_name);
+        tokio::fs::write(&temp_file, data).await?;
+        let res = self.push(&temp_file, remote_path).await;
+        let _ = tokio::fs::remove_file(&temp_file).await;
+        if res.is_ok() && mode != 0 {
+            let _ = self
+                .exec(&format!("chmod {:o} {}", mode, remote_path))
+                .await;
+        }
+        res
+    }
+
+    async fn pull_bytes(&self, remote_path: &str) -> Result<Vec<u8>> {
+        let temp_dir = std::env::temp_dir().join("rmv-pull-tmp");
+        tokio::fs::create_dir_all(&temp_dir).await.ok();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let file_name = format!("pull_{}_{}", std::process::id(), nanos);
+        let temp_file = temp_dir.join(file_name);
+        self.pull(remote_path, &temp_file).await?;
+        let data = tokio::fs::read(&temp_file).await?;
+        let _ = tokio::fs::remove_file(&temp_file).await;
+        Ok(data)
     }
 
     async fn is_alive(&self) -> bool {
@@ -158,7 +212,9 @@ impl Transport for AdbCliTransport {
         let (_, boot_id) = self.exec("cat /proc/sys/kernel/random/boot_id").await?;
 
         if proc_ver.trim().is_empty() || proc_ver.contains("device offline") {
-            return Err(RmvError::DeviceNotFound(t!("error.cannot_read_proc_version").to_string()));
+            return Err(RmvError::DeviceNotFound(
+                t!("error.cannot_read_proc_version").to_string(),
+            ));
         }
 
         DeviceInfo::parse(
@@ -177,7 +233,12 @@ impl Transport for AdbCliTransport {
 
         if !output.status.success() {
             return Err(RmvError::Adb {
-                message: t!("error.adb_cmd_failed", action = "reboot", error = String::from_utf8_lossy(&output.stderr).trim()).to_string(),
+                message: t!(
+                    "error.adb_cmd_failed",
+                    action = "reboot",
+                    error = String::from_utf8_lossy(&output.stderr).trim()
+                )
+                .to_string(),
                 code: output.status.code(),
             });
         }
@@ -186,7 +247,12 @@ impl Transport for AdbCliTransport {
 
         let mut wait_cmd = self.base_cmd();
         wait_cmd.arg("wait-for-device");
-        let _ = run_cmd_with_timeout(wait_cmd, Duration::from_secs(timeout_sec), "wait-for-device").await;
+        let _ = run_cmd_with_timeout(
+            wait_cmd,
+            Duration::from_secs(timeout_sec),
+            "wait-for-device",
+        )
+        .await;
 
         let start = std::time::Instant::now();
         let timeout_dur = Duration::from_secs(timeout_sec);
