@@ -125,6 +125,13 @@
     "history_cleared": "Cleared %{count} history records.",
     "download_done": "%{filename} downloaded.",
     "exploit_running": "Progress: %{line}",
-    "cleaning_traces_deep": "Performing deep cleanup..."
+    "cleaning_traces_deep": "Performing deep cleanup...",
+    "history_show_about": "View record details and execution logs by ID",
+    "history_not_found": "No history record found matching ID: %{id}",
+    "history_show_hint": "Use `rmv history show <ID>` to view details and logs.",
+    "history_record_title": "Run Record",
+    "history_logs_title": "Execution Logs",
+    "arg_history_limit": "Maximum number of records to display",
+    "arg_history_id": "Record ID or prefix"
   }
 }

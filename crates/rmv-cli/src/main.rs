@@ -4,10 +4,10 @@ rust_i18n::i18n!("../rmv-core/locales", fallback = "en");
 mod commands;
 mod ui;
 
-use std::path::PathBuf;
 use clap::{Arg, ArgAction, CommandFactory, FromArgMatches, Parser, Subcommand};
 use rmv_core::{set_current_language, Language};
 use rust_i18n::t;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "rmv", version)]
@@ -70,7 +70,6 @@ enum Commands {
 
         #[arg(long, default_value_t = 900)]
         timeout: u64,
-
     },
 
     Clean {
@@ -86,7 +85,13 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum HistoryAction {
-    List,
+    List {
+        #[arg(short, long, default_value_t = 15)]
+        limit: usize,
+    },
+    Show {
+        id: String,
+    },
     Clear,
 }
 
@@ -124,31 +129,42 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                 .help(t!("cli.arg_version").to_string()),
         )
         .disable_help_subcommand(true)
-        .subcommand(
-            clap::Command::new("help")
-                .about(t!("cli.help_subcmd").to_string()),
-        )
+        .subcommand(clap::Command::new("help").about(t!("cli.help_subcmd").to_string()))
         .mut_arg("serial", |a| a.help(t!("cli.arg_serial").to_string()))
         .mut_arg("lang", |a| a.help(t!("cli.arg_lang").to_string()))
         .mut_subcommand("check", |sc| sc.about(t!("cli.check_about").to_string()))
         .mut_subcommand("catalog", |sc| {
             sc.about(t!("cli.catalog_about").to_string())
-                .mut_arg("catalog_url", |a| a.help(t!("cli.arg_catalog_url").to_string()))
+                .mut_arg("catalog_url", |a| {
+                    a.help(t!("cli.arg_catalog_url").to_string())
+                })
         })
         .mut_subcommand("run", |sc| {
             sc.about(t!("cli.run_about").to_string())
                 .mut_arg("payload", |a| a.help(t!("cli.arg_payload").to_string()))
-                .mut_arg("catalog_url", |a| a.help(t!("cli.arg_catalog_url").to_string()))
+                .mut_arg("catalog_url", |a| {
+                    a.help(t!("cli.arg_catalog_url").to_string())
+                })
                 .mut_arg("ksu", |a| a.help(t!("cli.arg_ksu").to_string()))
                 .mut_arg("skip_ksu", |a| a.help(t!("cli.arg_skip_ksu").to_string()))
                 .mut_arg("attempts", |a| a.help(t!("cli.arg_attempts").to_string()))
                 .mut_arg("delay", |a| a.help(t!("cli.arg_delay").to_string()))
-                .mut_arg("save_history", |a| a.help(t!("cli.arg_save_history").to_string()))
-                .mut_arg("reboot_first", |a| a.help(t!("cli.arg_reboot_first").to_string()))
-                .mut_arg("force_payload", |a| a.help(t!("cli.arg_force_payload").to_string()))
-                .mut_arg("payload_dirs", |a| a.help(t!("cli.arg_payload_dir").to_string()))
+                .mut_arg("save_history", |a| {
+                    a.help(t!("cli.arg_save_history").to_string())
+                })
+                .mut_arg("reboot_first", |a| {
+                    a.help(t!("cli.arg_reboot_first").to_string())
+                })
+                .mut_arg("force_payload", |a| {
+                    a.help(t!("cli.arg_force_payload").to_string())
+                })
+                .mut_arg("payload_dirs", |a| {
+                    a.help(t!("cli.arg_payload_dir").to_string())
+                })
                 .mut_arg("dry_run", |a| a.help(t!("cli.arg_dry_run").to_string()))
-                .mut_arg("manager_apk", |a| a.help(t!("cli.arg_manager_apk").to_string()))
+                .mut_arg("manager_apk", |a| {
+                    a.help(t!("cli.arg_manager_apk").to_string())
+                })
                 .mut_arg("timeout", |a| a.help(t!("cli.arg_timeout").to_string()))
         })
         .mut_subcommand("clean", |sc| {
@@ -157,8 +173,17 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
         })
         .mut_subcommand("history", |sc| {
             sc.about(t!("cli.history_about").to_string())
-                .mut_subcommand("list", |s| s.about(t!("cli.history_list_about").to_string()))
-                .mut_subcommand("clear", |s| s.about(t!("cli.history_clear_about").to_string()))
+                .mut_subcommand("list", |s| {
+                    s.about(t!("cli.history_list_about").to_string())
+                        .mut_arg("limit", |a| a.help(t!("cli.arg_history_limit").to_string()))
+                })
+                .mut_subcommand("show", |s| {
+                    s.about(t!("cli.history_show_about").to_string())
+                        .mut_arg("id", |a| a.help(t!("cli.arg_history_id").to_string()))
+                })
+                .mut_subcommand("clear", |s| {
+                    s.about(t!("cli.history_clear_about").to_string())
+                })
         })
 }
 
@@ -221,8 +246,9 @@ async fn main() {
             .await
         }
         Commands::Clean { deep } => commands::run_clean(cli.serial, deep).await,
-        Commands::History { action } => match action.unwrap_or(HistoryAction::List) {
-            HistoryAction::List => commands::run_history_list().await,
+        Commands::History { action } => match action.unwrap_or(HistoryAction::List { limit: 15 }) {
+            HistoryAction::List { limit } => commands::run_history_list(limit).await,
+            HistoryAction::Show { id } => commands::run_history_show(&id).await,
             HistoryAction::Clear => commands::run_history_clear().await,
         },
     };

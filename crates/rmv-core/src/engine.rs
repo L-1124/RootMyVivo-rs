@@ -61,6 +61,13 @@ pub struct ExploitEngine {
     work_dir: PathBuf,
 }
 
+fn append_captured_log(captured: &mut Vec<String>, line: &str) {
+    if captured.len() >= 50 {
+        captured.remove(0);
+    }
+    captured.push(line.to_string());
+}
+
 impl ExploitEngine {
     pub fn new(work_dir: impl AsRef<Path>) -> Self {
         Self {
@@ -78,9 +85,62 @@ impl ExploitEngine {
         options: EngineOptions,
         event_tx: UnboundedSender<EngineEvent>,
     ) -> Result<()> {
+        let mut captured_logs = Vec::new();
+        let res = self
+            .run_internal(transport, &options, &event_tx, &mut captured_logs)
+            .await;
+
+        if options.save_history && !options.dry_run {
+            let (model, code, kernel, payload_str, success, message) = match &res {
+                Ok((dev, p_path, msg)) => (
+                    dev.model.clone(),
+                    dev.device.clone(),
+                    dev.kernel_full.clone(),
+                    p_path.display().to_string(),
+                    true,
+                    msg.clone(),
+                ),
+                Err(e) => (
+                    "-".to_string(),
+                    "-".to_string(),
+                    "-".to_string(),
+                    options
+                        .custom_payload
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    false,
+                    e.to_string(),
+                ),
+            };
+
+            let record = RunRecord {
+                id: HistoryManager::new_record_id(),
+                timestamp: HistoryManager::current_timestamp(),
+                device_model: model,
+                device_code: code,
+                kernel,
+                payload: payload_str,
+                ksu_variant: options.ksu_variant.display_name().to_string(),
+                success,
+                message,
+                logs: captured_logs,
+            };
+            let _ = HistoryManager::save_record(&HistoryManager::default_dir(), &record).await;
+        }
+
+        res.map(|_| ())
+    }
+
+    async fn run_internal<T: Transport>(
+        &self,
+        transport: &T,
+        options: &EngineOptions,
+        event_tx: &UnboundedSender<EngineEvent>,
+        captured_logs: &mut Vec<String>,
+    ) -> Result<(crate::device::DeviceInfo, PathBuf, String)> {
         let total_steps = if options.skip_ksu { 4 } else { 5 };
         let _ = event_tx.send(EngineEvent::Status(EngineStatus::Running));
-
         // 步骤 1: 设备环境与门禁检测
         let _ = event_tx.send(EngineEvent::Step {
             phase: Phase::DeviceCheck,
@@ -285,15 +345,16 @@ impl ExploitEngine {
                 .to_string(),
             });
             let _ = event_tx.send(EngineEvent::Status(EngineStatus::Success));
+            let msg = t!(
+                "log.dry_run_complete_msg",
+                path = payload_local_path.display().to_string()
+            )
+            .to_string();
             let _ = event_tx.send(EngineEvent::Completed {
                 success: true,
-                message: t!(
-                    "log.dry_run_complete_msg",
-                    path = payload_local_path.display().to_string()
-                )
-                .to_string(),
+                message: msg.clone(),
             });
-            return Ok(());
+            return Ok((device, payload_local_path, msg));
         }
 
         // 部署阶段
@@ -425,6 +486,9 @@ impl ExploitEngine {
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
                         .collect();
+                    for l in &lines {
+                        append_captured_log(captured_logs, l);
+                    }
                     let _ = event_tx.send(EngineEvent::ExploitLive {
                         attempt: last_attempt,
                         max: Some(options.attempts),
@@ -519,22 +583,6 @@ impl ExploitEngine {
             message: success_msg.clone(),
         });
 
-        if options.save_history {
-            let record = RunRecord {
-                id: HistoryManager::new_record_id(),
-                timestamp: HistoryManager::current_timestamp(),
-                device_model: device.model.clone(),
-                device_code: device.device.clone(),
-                kernel: device.kernel_full.clone(),
-                payload: payload_local_path.display().to_string(),
-                ksu_variant: options.ksu_variant.display_name().to_string(),
-                success: true,
-                message: success_msg,
-                logs: vec!["提权与加载成功完成".to_string()],
-            };
-            let _ = HistoryManager::save_record(&HistoryManager::default_dir(), &record).await;
-        }
-
-        Ok(())
+        Ok((device, payload_local_path, success_msg))
     }
 }

@@ -225,7 +225,7 @@ pub async fn run_clean(serial: Option<String>, deep: bool) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_history_list() -> Result<()> {
+pub async fn run_history_list(limit: usize) -> Result<()> {
     let dir = HistoryManager::default_dir();
     let records = HistoryManager::list_records(&dir).await?;
 
@@ -234,29 +234,99 @@ pub async fn run_history_list() -> Result<()> {
         return Ok(());
     }
 
+    let total = records.len();
+    let display_count = limit.min(total);
+
     println!("\n{}", t!("cli.history_title").cyan().bold());
-    for rec in records {
+    println!(
+        "  {:<10} {:<8} {:<20} {:<18} {:<16} {}",
+        "ID".dimmed(),
+        "STATUS".dimmed(),
+        "TIMESTAMP".dimmed(),
+        "DEVICE".dimmed(),
+        "KSU".dimmed(),
+        "PAYLOAD".dimmed()
+    );
+
+    for rec in records.iter().take(display_count) {
         let status = if rec.success {
             "PASS".green().bold()
         } else {
             "FAIL".red().bold()
         };
+
+        let short_payload = std::path::Path::new(&rec.payload)
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| rec.payload.clone());
+
+        let dev_str = if rec.device_code == rec.device_model || rec.device_code == "-" {
+            rec.device_model.clone()
+        } else {
+            format!("{} ({})", rec.device_model, rec.device_code)
+        };
+
         println!(
-            "  [{}] {} | Device: {} ({}) | KSU: {} | Payload: {}",
+            "  {:<10} {:<8} {:<20} {:<18} {:<16} {}",
             rec.id.yellow(),
             status,
-            rec.device_model,
-            rec.device_code,
+            rec.timestamp,
+            dev_str,
             rec.ksu_variant,
-            rec.payload
+            short_payload
         );
     }
+
     println!();
+    println!("  {}", t!("cli.history_show_hint").dimmed());
+    println!();
+    Ok(())
+}
+
+pub async fn run_history_show(id: &str) -> Result<()> {
+    let dir = HistoryManager::default_dir();
+    let rec = match HistoryManager::get_record(&dir, id).await? {
+        Some(r) => r,
+        None => {
+            eprintln!(
+                "{} {}",
+                "[fail]".red().bold(),
+                t!("cli.history_not_found", id = id)
+            );
+            std::process::exit(1);
+        }
+    };
+
     println!(
-        "{} {}",
-        t!("cli.history_stored_at"),
-        dir.display().to_string().dimmed()
+        "\n{} [{}]",
+        t!("cli.history_record_title").cyan().bold(),
+        rec.id.yellow().bold()
     );
+    println!("  Timestamp  : {}", rec.timestamp);
+    let status_str = if rec.success {
+        "PASS".green().bold()
+    } else {
+        "FAIL".red().bold()
+    };
+    println!("  Status     : {}", status_str);
+    println!("  Device     : {} ({})", rec.device_model, rec.device_code);
+    println!("  Kernel     : {}", rec.kernel);
+    println!("  Payload    : {}", rec.payload);
+    println!("  KernelSU   : {}", rec.ksu_variant);
+    println!("  Message    : {}", rec.message);
+
+    println!(
+        "\n{} ({} lines):",
+        t!("cli.history_logs_title").cyan().bold(),
+        rec.logs.len()
+    );
+    if rec.logs.is_empty() {
+        println!("  {}", "(no log lines captured)".dimmed());
+    } else {
+        for line in &rec.logs {
+            println!("    {}", line.dimmed());
+        }
+    }
     println!();
     Ok(())
 }

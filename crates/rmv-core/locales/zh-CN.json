@@ -125,6 +125,13 @@
     "history_cleared": "已清除 %{count} 条运行记录。",
     "download_done": "%{filename} 下载完成。",
     "exploit_running": "进度: %{line}",
-    "cleaning_traces_deep": "正在执行深度清理..."
+    "cleaning_traces_deep": "正在执行深度清理...",
+    "history_show_about": "查看指定记录的详细信息与日志",
+    "history_not_found": "未找到 ID 为 %{id} 的历史记录",
+    "history_show_hint": "使用 `rmv history show <ID>` 查看详细信息与完整日志",
+    "history_record_title": "运行记录",
+    "history_logs_title": "运行日志",
+    "arg_history_limit": "最大显示条数",
+    "arg_history_id": "记录 ID 或前缀"
   }
 }
