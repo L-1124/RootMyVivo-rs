@@ -23,7 +23,8 @@
     "io": "I/O 错误: %{message}",
     "http": "网络请求失败: %{message}",
     "json": "数据解析错误: %{message}",
-    "local_payload_not_found": "指定的本地载荷文件不存在: %{path}"
+    "local_payload_not_found": "指定的本地载荷文件不存在: %{path}",
+    "pairing_failed": "无线配对失败"
   },
   "gate": {
     "cve_patched_6_6": "已在 Linux 6.6.140+ 修复",
@@ -133,6 +134,12 @@
     "history_logs_title": "运行日志",
     "arg_history_limit": "最大显示条数",
     "arg_history_id": "记录 ID 或前缀",
-    "arg_transport": "传输方式：auto（优先原生USB，被占回退ADB命令行）、usb（纯原生USB）、cli（传统ADB命令行）"
+    "arg_transport": "传输方式：auto（优先USB，无则mDNS无线发现，被占回退CLI）、usb、wifi、cli",
+    "pair_about": "使用配对码与 Android 11+ 无线调试进行安全配对",
+    "arg_pair_addr": "手机配对界面显示的 IP:端口（例如 192.168.1.50:37123）",
+    "arg_pair_code": "手机界面显示的 6 位配对码",
+    "pairing_connecting": "正在连接配对地址 %{addr} 并执行 SPAKE2 握手...",
+    "pairing_success": "设备配对成功！双向 TLS 凭据已协商就绪。",
+    "pairing_saved_hint": "凭据已保存至 ~/.rmv/adb_tls/，后续无需重复输入配对码。"
   }
 }

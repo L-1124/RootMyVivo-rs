@@ -38,3 +38,5 @@ pub use transport::AdbUsbTransport;
 pub use transport::Transport;
 #[cfg(not(target_arch = "wasm32"))]
 pub use transport::{AdbCliTransport, TransportBuilder, TransportMode};
+#[cfg(all(feature = "native-wifi", not(target_arch = "wasm32")))]
+pub use transport::{AdbPairing, AdbWifiTransport};

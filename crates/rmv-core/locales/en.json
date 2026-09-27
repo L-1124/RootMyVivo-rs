@@ -23,7 +23,8 @@
     "io": "I/O error: %{message}",
     "http": "Network request failed: %{message}",
     "json": "Data parsing error: %{message}",
-    "local_payload_not_found": "Specified local payload file does not exist: %{path}"
+    "local_payload_not_found": "Specified local payload file does not exist: %{path}",
+    "pairing_failed": "Wireless pairing failed"
   },
   "gate": {
     "cve_patched_6_6": "Patched in Linux 6.6.140+",
@@ -133,6 +134,12 @@
     "history_logs_title": "Execution Logs",
     "arg_history_limit": "Maximum number of records to display",
     "arg_history_id": "Record ID or prefix",
-    "arg_transport": "Transport backend: auto (direct USB first, fallback to ADB CLI), usb, cli"
+    "arg_transport": "Transport backend: auto (USB first, then Wi-Fi mDNS, fallback to ADB CLI), usb, wifi, cli",
+    "pair_about": "Pair with Android 11+ wireless debugging using pairing code",
+    "arg_pair_addr": "Target IP:Port displayed on pairing dialog (e.g. 192.168.1.50:37123)",
+    "arg_pair_code": "6-digit pairing code shown on device",
+    "pairing_connecting": "Connecting to %{addr} and running SPAKE2 handshake...",
+    "pairing_success": "Device paired successfully! Mutual TLS credentials established.",
+    "pairing_saved_hint": "Credentials saved to ~/.rmv/adb_tls/. Future wireless connections will auto-authenticate."
   }
 }

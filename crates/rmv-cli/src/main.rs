@@ -32,6 +32,10 @@ enum Commands {
         #[arg(long)]
         catalog_url: Option<String>,
     },
+    Pair {
+        addr: String,
+        code: String,
+    },
 
     Run {
         #[arg(short, long)]
@@ -188,6 +192,11 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                     s.about(t!("cli.history_clear_about").to_string())
                 })
         })
+        .mut_subcommand("pair", |sc| {
+            sc.about(t!("cli.pair_about").to_string())
+                .mut_arg("addr", |a| a.help(t!("cli.arg_pair_addr").to_string()))
+                .mut_arg("code", |a| a.help(t!("cli.arg_pair_code").to_string()))
+        })
 }
 
 #[tokio::main]
@@ -254,6 +263,7 @@ async fn main() {
             .await
         }
         Commands::Clean { deep } => commands::run_clean(cli.serial, deep, transport_mode).await,
+        Commands::Pair { addr, code } => commands::run_pair(&addr, &code).await,
         Commands::History { action } => match action.unwrap_or(HistoryAction::List { limit: 15 }) {
             HistoryAction::List { limit } => commands::run_history_list(limit).await,
             HistoryAction::Show { id } => commands::run_history_show(&id).await,

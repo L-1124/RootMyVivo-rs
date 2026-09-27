@@ -230,6 +230,27 @@ pub async fn run_clean(serial: Option<String>, deep: bool, mode: TransportMode) 
     }
     Ok(())
 }
+pub async fn run_pair(addr: &str, code: &str) -> Result<()> {
+    println!(
+        "{} {}",
+        "[ .. ]".cyan(),
+        t!("cli.pairing_connecting", addr = addr)
+    );
+    rmv_core::AdbPairing::pair(addr, code)
+        .await
+        .context(t!("error.pairing_failed"))?;
+    println!(
+        "{} {}",
+        "[ ok ]".green().bold(),
+        t!("cli.pairing_success").green().bold()
+    );
+    println!(
+        "{} {}",
+        "[info]".cyan(),
+        t!("cli.pairing_saved_hint").dimmed()
+    );
+    Ok(())
+}
 
 pub async fn run_history_list(limit: usize) -> Result<()> {
     let dir = HistoryManager::default_dir();

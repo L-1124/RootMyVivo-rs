@@ -4,6 +4,8 @@ pub mod adb;
 pub mod builder;
 #[cfg(all(feature = "native-usb", not(target_arch = "wasm32")))]
 pub mod usb;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod wifi;
 
 use crate::device::DeviceInfo;
 use crate::error::Result;
@@ -16,6 +18,10 @@ pub use adb::AdbCliTransport;
 pub use builder::{TransportBuilder, TransportMode};
 #[cfg(all(feature = "native-usb", not(target_arch = "wasm32")))]
 pub use usb::native_usb::AdbUsbTransport;
+#[cfg(all(feature = "native-wifi", not(target_arch = "wasm32")))]
+pub use wifi::pairing::AdbPairing;
+#[cfg(all(feature = "native-wifi", not(target_arch = "wasm32")))]
+pub use wifi::AdbWifiTransport;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub trait MaybeSend: Send + Sync {}
