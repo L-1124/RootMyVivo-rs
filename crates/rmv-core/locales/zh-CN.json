@@ -58,7 +58,8 @@
     "dry_run_complete_msg": "模拟完成，未向设备下发文件。载荷: %{path}",
     "exploit_attached": "检测到后台已有运行中的提权进程，已直接附加监听。",
     "exploit_gone": "提权进程已退出，未达成 Root 状态。",
-    "exploit_still_running": "载荷仍在后台持续探测中 (%{secs} 秒)。"
+    "exploit_still_running": "载荷仍在后台持续探测中 (%{secs} 秒)。",
+    "su_wrapper_applied": "已对被抢占的 su 路径配置安全转发: %{path}"
   },
   "cli": {
     "app_about": "vivo / iQOO 设备免解锁临时提权与 KernelSU 工具",

@@ -1,7 +1,7 @@
+use reqwest::Client;
 use rust_i18n::t;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use reqwest::Client;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 
@@ -14,7 +14,6 @@ use crate::ksu::{KsuOrchestrator, KsuVariant};
 use crate::payload::{find_local_payload, verify_payload_file};
 use crate::persistence::Persistence;
 use crate::transport::Transport;
-
 
 #[derive(Debug, Clone)]
 pub struct EngineOptions {
@@ -101,7 +100,6 @@ impl ExploitEngine {
             });
         }
 
-
         let device = transport.get_device_info().await?;
         let _ = event_tx.send(EngineEvent::Log {
             level: LogLevel::Ok,
@@ -111,7 +109,8 @@ impl ExploitEngine {
                 device = &device.device,
                 brand = &device.brand,
                 kernel = device.gki_git_id.as_deref().unwrap_or("-")
-            ).to_string(),
+            )
+            .to_string(),
         });
 
         match device.evaluate_gate() {
@@ -147,7 +146,11 @@ impl ExploitEngine {
             if !custom.exists() {
                 let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                 return Err(RmvError::ExploitFailed(
-                    t!("error.local_payload_not_found", path = custom.display().to_string()).to_string(),
+                    t!(
+                        "error.local_payload_not_found",
+                        path = custom.display().to_string()
+                    )
+                    .to_string(),
                 ));
             }
             custom.clone()
@@ -159,26 +162,35 @@ impl ExploitEngine {
                 desc: t!("log.catalog_search").to_string(),
             });
 
-            let catalog = CatalogV5::fetch_with_url(&self.client, options.custom_catalog_url.as_deref()).await?;
-            let (device_entry, kernel_build) = catalog
-                .match_payload(&device)
-                .ok_or_else(|| RmvError::PayloadNotFound {
-                    device: format!("{}/{}", device.model, device.device),
-                    kernel: device.kernel_full.clone(),
-                })?;
+            let catalog =
+                CatalogV5::fetch_with_url(&self.client, options.custom_catalog_url.as_deref())
+                    .await?;
+            let (device_entry, kernel_build) =
+                catalog
+                    .match_payload(&device)
+                    .ok_or_else(|| RmvError::PayloadNotFound {
+                        device: format!("{}/{}", device.model, device.device),
+                        kernel: device.kernel_full.clone(),
+                    })?;
             market_hint = Some(device_entry.market_name.clone());
 
-            let file_info = kernel_build
-                .file
-                .as_ref()
-                .ok_or_else(|| RmvError::PayloadNotFound {
-                    device: device.model.clone(),
-                    kernel: "匹配成功但该构建未提供下载文件".to_string(),
-                })?;
+            let file_info =
+                kernel_build
+                    .file
+                    .as_ref()
+                    .ok_or_else(|| RmvError::PayloadNotFound {
+                        device: device.model.clone(),
+                        kernel: "匹配成功但该构建未提供下载文件".to_string(),
+                    })?;
 
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
-                line: t!("log.matched_payload", name = &file_info.name, size = file_info.size.to_string()).to_string(),
+                line: t!(
+                    "log.matched_payload",
+                    name = &file_info.name,
+                    size = file_info.size.to_string()
+                )
+                .to_string(),
             });
 
             // 步骤 3: 载荷下载与哈希校验
@@ -223,7 +235,11 @@ impl ExploitEngine {
             Ok(identity) if identity.has_device_fingerprint => {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Ok,
-                    line: t!("log.gate_verified", fingerprint = device.abogki_fingerprint.as_deref().unwrap_or("-")).to_string(),
+                    line: t!(
+                        "log.gate_verified",
+                        fingerprint = device.abogki_fingerprint.as_deref().unwrap_or("-")
+                    )
+                    .to_string(),
                 });
             }
             Ok(identity) => {
@@ -262,12 +278,20 @@ impl ExploitEngine {
         if options.dry_run {
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
-                line: t!("log.dry_run_done", path = payload_local_path.display().to_string()).to_string(),
+                line: t!(
+                    "log.dry_run_done",
+                    path = payload_local_path.display().to_string()
+                )
+                .to_string(),
             });
             let _ = event_tx.send(EngineEvent::Status(EngineStatus::Success));
             let _ = event_tx.send(EngineEvent::Completed {
                 success: true,
-                message: t!("log.dry_run_complete_msg", path = payload_local_path.display().to_string()).to_string(),
+                message: t!(
+                    "log.dry_run_complete_msg",
+                    path = payload_local_path.display().to_string()
+                )
+                .to_string(),
             });
             return Ok(());
         }
@@ -275,7 +299,11 @@ impl ExploitEngine {
         // 部署阶段
         let _ = event_tx.send(EngineEvent::Step {
             phase: Phase::Deploy,
-            index: if options.custom_payload.is_some() { 2 } else { 3 },
+            index: if options.custom_payload.is_some() {
+                2
+            } else {
+                3
+            },
             total: total_steps,
             desc: t!("log.deploy_so").to_string(),
         });
@@ -283,7 +311,10 @@ impl ExploitEngine {
         let remote_dir = "/data/local/tmp/rmv";
         let remote_so = "/data/local/tmp/rmv/preload.so";
         let _ = transport
-            .exec(&format!("mkdir -p {} && rm -f {} /data/local/tmp/rmv/DONE /data/local/tmp/rmv/live.log", remote_dir, remote_so))
+            .exec(&format!(
+                "mkdir -p {} && rm -f {} /data/local/tmp/rmv/DONE /data/local/tmp/rmv/live.log",
+                remote_dir, remote_so
+            ))
             .await?;
         transport.push(&payload_local_path, remote_so).await?;
         let _ = transport.exec(&format!("chmod 755 {}", remote_so)).await?;
@@ -291,7 +322,11 @@ impl ExploitEngine {
         // 步骤: 执行提权并监听
         let _ = event_tx.send(EngineEvent::Step {
             phase: Phase::Exploit,
-            index: if options.custom_payload.is_some() { 3 } else { 4 },
+            index: if options.custom_payload.is_some() {
+                3
+            } else {
+                4
+            },
             total: total_steps,
             desc: t!("log.exploit_start").to_string(),
         });
@@ -445,7 +480,11 @@ impl ExploitEngine {
 
         // 步骤: KernelSU Late-Load
         if !options.skip_ksu {
-            let ksu_step = if options.custom_payload.is_some() { 4 } else { 5 };
+            let ksu_step = if options.custom_payload.is_some() {
+                4
+            } else {
+                5
+            };
             let _ = event_tx.send(EngineEvent::Step {
                 phase: Phase::Ksu,
                 index: ksu_step,
@@ -459,6 +498,15 @@ impl ExploitEngine {
                 level: LogLevel::Ok,
                 line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),
             });
+
+            // 自动检测并包装被抢占的 su 路径
+            let repaired = KsuOrchestrator::apply_su_wrapper_fix(transport).await?;
+            for path in repaired {
+                let _ = event_tx.send(EngineEvent::Log {
+                    level: LogLevel::Ok,
+                    line: t!("log.su_wrapper_applied", path = path).to_string(),
+                });
+            }
         }
 
         // 清理设备端临时痕迹
@@ -488,5 +536,5 @@ impl ExploitEngine {
         }
 
         Ok(())
-}
+    }
 }

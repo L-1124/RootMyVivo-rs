@@ -58,7 +58,8 @@
     "dry_run_complete_msg": "Dry-run completed without deploying to device. Payload: %{path}",
     "exploit_attached": "Attached to existing in-progress exploit process.",
     "exploit_gone": "Exploit process exited before completing.",
-    "exploit_still_running": "Payload still running after %{secs}s in background."
+    "exploit_still_running": "Payload still running after %{secs}s in background.",
+    "su_wrapper_applied": "Forwarding wrapper configured for shadowed path: %{path}"
   },
   "cli": {
     "app_about": "Automated temporary root & KernelSU loader for vivo/iQOO devices",
