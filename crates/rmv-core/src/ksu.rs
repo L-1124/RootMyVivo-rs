@@ -75,7 +75,11 @@ impl KsuOrchestrator {
         variant: KsuVariant,
         host_manager_apk: Option<&Path>,
     ) -> Result<String> {
-        let default_ksud = "/data/local/tmp/ksud";
+        // ksud 与载荷同置于 /data/local/tmp/rmv，便于 `rmv clean` 一次性清掉
+        let work_dir = "/data/local/tmp/rmv";
+        let default_ksud = "/data/local/tmp/rmv/ksud";
+
+        let _ = transport.exec(&format!("mkdir -p {}", work_dir)).await?;
 
         let (check_code, _) = transport
             .exec(&format!(
@@ -123,7 +127,7 @@ impl KsuOrchestrator {
 
         if let Some(apk_path) = host_manager_apk {
             if apk_path.exists() {
-                let remote_apk = "/data/local/tmp/manager_temp.apk";
+                let remote_apk = "/data/local/tmp/rmv/manager_temp.apk";
                 if transport.push(apk_path, remote_apk).await.is_ok() {
                     let extract_script = format!(
                         "unzip -p {} lib/arm64-v8a/libksud.so > {} 2>/dev/null; rm -f {}; chmod 755 {}; test -x {} && echo KSUD_OK",

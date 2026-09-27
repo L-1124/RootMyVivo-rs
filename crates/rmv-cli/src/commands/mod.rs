@@ -196,15 +196,10 @@ pub async fn run_exploit(
     res.map_err(Into::into)
 }
 
-pub async fn run_clean(serial: Option<String>, deep: bool, mode: TransportMode) -> Result<()> {
-    let start_msg = if deep {
-        t!("cli.cleaning_traces_deep")
-    } else {
-        t!("cli.cleaning_traces")
-    };
-    println!("{} {}", "[ .. ]".cyan(), start_msg);
+pub async fn run_clean(serial: Option<String>, mode: TransportMode) -> Result<()> {
+    println!("{} {}", "[ .. ]".cyan(), t!("cli.cleaning_traces"));
     let transport = TransportBuilder::resolve(serial, mode).await?;
-    let outcome = Persistence::clean_traces(&transport, deep)
+    let outcome = Persistence::clean_traces(&transport)
         .await
         .context(t!("error.exploit_failed", message = "clean"))?;
     match outcome {

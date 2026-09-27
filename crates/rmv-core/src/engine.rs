@@ -574,7 +574,7 @@ impl ExploitEngine {
         }
 
         // 清理设备端临时痕迹
-        let _ = Persistence::clean_traces(transport, false).await;
+        let _ = Persistence::clean_traces(transport).await;
 
         let success_msg = t!("log.finished").to_string();
         let _ = event_tx.send(EngineEvent::Status(EngineStatus::Success));

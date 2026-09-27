@@ -40,8 +40,9 @@ graph TD
 ### Data Flow Invariants
 1. **Device Gate**: `/proc/version` kernel version $\ge$ 6.6.140 is patched; the engine halts immediately (`GateStatus::Patched`).
 2. **Payload Selection**: Matched strictly by kernel build fingerprint (`abogki*`), never by consumer device marketing name alone.
-3. **KSU Timing**: `ksud late-load` runs *immediately* upon obtaining `uid=0` while exploit daemon pipes survive; su path repair wraps shadowed binaries (`/system/bin/su`, `/apex/com.android.virt/bin/su`) with self-healing base64 scripts.
-4. **History Retention**: Real runs record the last 50 execution logs to `~/.rmv/history/<timestamp>_<id>.json`. Dry runs (`--dry-run`) **never** write history.
+3. **KSU Timing**: `ksud late-load` runs *immediately* upon obtaining `uid=0` while exploit daemon pipes survive. The `su` repair then overwrites `/apex/com.android.virt/bin/su` and `/data/local/tmp/su` with a 42-byte delegating wrapper (`exec /system/bin/su "$@"`); it is gated on `/system/bin/su` already returning `uid=0` and **silently no-ops** when that gate fails.
+4. **Device Footprint**: every rmv-owned device artifact lives under `/data/local/tmp/rmv` (`preload.so`, `ksud`, `live.log`, `DONE`, transient `manager_temp.apk`), so device-side teardown is a single directory sweep.
+5. **History Retention**: Real runs record the last 50 execution logs to `~/.rmv/history/<timestamp>_<id>.json`. Dry runs (`--dry-run`) **never** write history.
 
 ---
 
@@ -96,7 +97,12 @@ cargo run --bin rmv -- pair 192.168.1.50:37123 876543
 
 # Run exploit in simulation mode (no files sent, no history polluted)
 cargo run --bin rmv -- run -p /path/to/preload.so --dry-run
+
+# Sweep device-side artifacts (single full clean; there is no --deep flag)
+cargo run --bin rmv -- clean -t cli
 ```
+
+`rmv clean` always runs the full sweep: it removes `/data/local/tmp/rmv` (payload, `ksud`, `live.log`, `DONE`) plus legacy payload residue at the tmp root (`preload.so`, `su`, `temp_su.sock`, `su_daemon.log`, `exploit_run.log`), `/data/adb/rmv`, and any stale `su --daemon`. It never touches `/apex/com.android.virt/bin/su`, `/system/bin/su`, KSU modules, or third-party entries under `/data/local/tmp` — the `chown` is **non-recursive** on purpose, and the `su --daemon` match uses the `[s]u` bracket trick so `pkill` cannot kill the shell running it.
 
 ---
 

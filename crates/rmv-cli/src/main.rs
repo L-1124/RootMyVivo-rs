@@ -78,10 +78,7 @@ enum Commands {
         timeout: u64,
     },
 
-    Clean {
-        #[arg(long, default_value_t = false)]
-        deep: bool,
-    },
+    Clean,
 
     History {
         #[command(subcommand)]
@@ -174,10 +171,7 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                 })
                 .mut_arg("timeout", |a| a.help(t!("cli.arg_timeout").to_string()))
         })
-        .mut_subcommand("clean", |sc| {
-            sc.about(t!("cli.clean_about").to_string())
-                .mut_arg("deep", |a| a.help(t!("cli.arg_deep").to_string()))
-        })
+        .mut_subcommand("clean", |sc| sc.about(t!("cli.clean_about").to_string()))
         .mut_subcommand("history", |sc| {
             sc.about(t!("cli.history_about").to_string())
                 .mut_subcommand("list", |s| {
@@ -262,7 +256,7 @@ async fn main() {
             )
             .await
         }
-        Commands::Clean { deep } => commands::run_clean(cli.serial, deep, transport_mode).await,
+        Commands::Clean => commands::run_clean(cli.serial, transport_mode).await,
         Commands::Pair { addr, code } => commands::run_pair(&addr, &code).await,
         Commands::History { action } => match action.unwrap_or(HistoryAction::List { limit: 15 }) {
             HistoryAction::List { limit } => commands::run_history_list(limit).await,
