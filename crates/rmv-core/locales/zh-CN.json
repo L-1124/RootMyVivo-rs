@@ -116,14 +116,15 @@
     "cleaning_traces": "正在清理设备临时文件...",
     "clean_deep_label": "深度清理模式",
     "clean_basic_label": "基础清理模式",
-    "cleaned_root": "设备临时文件与残留已清理完毕 (以 Root 权限)。",
-    "cleaned_shell": "已清理当前临时文件 (以 Shell 权限)。",
-    "cleaned_shell_warn": "当前无 Root 权限，旧的 Root 属主残留未被移除。",
+    "cleaned_root": "临时文件与残留已清理 (root)",
+    "cleaned_shell": "临时文件已清理 (shell)",
+    "cleaned_shell_warn": "设备当前无 root，未能移除 root 属主残留",
     "history_title": "运行历史",
     "history_empty": "暂无运行记录。",
     "history_stored_at": "日志存储路径:",
     "history_cleared": "已清除 %{count} 条运行记录。",
     "download_done": "%{filename} 下载完成。",
-    "exploit_running": "进度: %{line}"
+    "exploit_running": "进度: %{line}",
+    "cleaning_traces_deep": "正在执行深度清理..."
   }
 }

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use crate::ui::CliUi;
 use anyhow::{Context, Result};
 use colored::*;
 use rmv_core::{
@@ -6,8 +6,8 @@ use rmv_core::{
     HistoryManager, KsuVariant, Persistence, Transport,
 };
 use rust_i18n::t;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
-use crate::ui::CliUi;
 
 pub async fn run_check(serial: Option<String>) -> Result<()> {
     println!("{}", t!("cli.probing_device").bold().cyan());
@@ -18,13 +18,27 @@ pub async fn run_check(serial: Option<String>) -> Result<()> {
         .context(t!("error.device_not_found", message = "ADB"))?;
 
     println!("\n{}", t!("cli.device_summary").cyan().bold());
-    println!("  {} : {}", t!("cli.device_code"), dev.device.bold().green());
-    println!("  {} : {}", t!("cli.device_model"), dev.model.bold().green());
-    println!("  {} : {}", t!("cli.device_brand"), dev.brand.bold().green());
+    println!(
+        "  {} : {}",
+        t!("cli.device_code"),
+        dev.device.bold().green()
+    );
+    println!(
+        "  {} : {}",
+        t!("cli.device_model"),
+        dev.model.bold().green()
+    );
+    println!(
+        "  {} : {}",
+        t!("cli.device_brand"),
+        dev.brand.bold().green()
+    );
     println!(
         "  {} : Linux {}.{}.{}",
         t!("cli.kernel_version"),
-        dev.kernel_version.0, dev.kernel_version.1, dev.kernel_version.2
+        dev.kernel_version.0,
+        dev.kernel_version.1,
+        dev.kernel_version.2
     );
     println!(
         "  {} : {}",
@@ -84,15 +98,30 @@ pub async fn run_catalog(serial: Option<String>, catalog_url: Option<String>) ->
         )
     );
 
-    let transport = AdbCliTransport::resolve(serial).await.unwrap_or_else(|_| AdbCliTransport::new(None));
+    let transport = AdbCliTransport::resolve(serial)
+        .await
+        .unwrap_or_else(|_| AdbCliTransport::new(None));
     if let Ok(dev) = transport.get_device_info().await {
         println!("{}", t!("cli.matching_device").bold().cyan());
         match catalog.match_payload(&dev) {
             Some((device_entry, kernel_build)) => {
-                println!("  {} : {}", t!("cli.matched_device"), device_entry.market_name.bold().green());
-                println!("  {} : {}", t!("cli.payload_status"), kernel_build.status.bold().yellow());
+                println!(
+                    "  {} : {}",
+                    t!("cli.matched_device"),
+                    device_entry.market_name.bold().green()
+                );
+                println!(
+                    "  {} : {}",
+                    t!("cli.payload_status"),
+                    kernel_build.status.bold().yellow()
+                );
                 if let Some(file) = &kernel_build.file {
-                    println!("  {} : {} ({} bytes)", t!("cli.payload_file"), file.name.green(), file.size);
+                    println!(
+                        "  {} : {} ({} bytes)",
+                        t!("cli.payload_file"),
+                        file.name.green(),
+                        file.size
+                    );
                     println!("  {} : {}", t!("cli.download_url"), file.url.dimmed());
                 }
             }
@@ -162,19 +191,35 @@ pub async fn run_exploit(
 }
 
 pub async fn run_clean(serial: Option<String>, deep: bool) -> Result<()> {
-    let mode_desc = if deep { t!("cli.clean_deep_label") } else { t!("cli.clean_basic_label") };
-    println!("{} ({})", t!("cli.cleaning_traces").bold().cyan(), mode_desc);
+    let start_msg = if deep {
+        t!("cli.cleaning_traces_deep")
+    } else {
+        t!("cli.cleaning_traces")
+    };
+    println!("{} {}", "[ .. ]".cyan(), start_msg);
     let transport = AdbCliTransport::resolve(serial).await?;
     let outcome = Persistence::clean_traces(&transport, deep)
         .await
         .context(t!("error.exploit_failed", message = "clean"))?;
     match outcome {
         CleanOutcome::WithRoot => {
-            println!("{}", t!("cli.cleaned_root").bold().green());
+            println!(
+                "{} {}",
+                "[ ok ]".green().bold(),
+                t!("cli.cleaned_root").green()
+            );
         }
         CleanOutcome::ShellOnly => {
-            println!("{}", t!("cli.cleaned_shell").bold().green());
-            println!("{}", t!("cli.cleaned_shell_warn").yellow());
+            println!(
+                "{} {}",
+                "[ ok ]".green().bold(),
+                t!("cli.cleaned_shell").green()
+            );
+            println!(
+                "{} {}",
+                "[warn]".yellow().bold(),
+                t!("cli.cleaned_shell_warn").yellow()
+            );
         }
     }
     Ok(())
@@ -207,7 +252,11 @@ pub async fn run_history_list() -> Result<()> {
         );
     }
     println!();
-    println!("{} {}", t!("cli.history_stored_at"), dir.display().to_string().dimmed());
+    println!(
+        "{} {}",
+        t!("cli.history_stored_at"),
+        dir.display().to_string().dimmed()
+    );
     println!();
     Ok(())
 }
@@ -215,6 +264,11 @@ pub async fn run_history_list() -> Result<()> {
 pub async fn run_history_clear() -> Result<()> {
     let dir = HistoryManager::default_dir();
     let count = HistoryManager::clear_records(&dir).await?;
-    println!("{}", t!("cli.history_cleared", count = count.to_string()).green().bold());
+    println!(
+        "{}",
+        t!("cli.history_cleared", count = count.to_string())
+            .green()
+            .bold()
+    );
     Ok(())
 }

@@ -113,17 +113,18 @@
     "download_url": "URL",
     "no_payload_matched": "No dedicated payload found in catalog for this device.",
     "no_device_connected": "No ADB device connected. Run `rmv check` to inspect.",
-    "cleaning_traces": "Cleaning temporary files on device...",
+    "cleaning_traces": "Cleaning temporary files...",
     "clean_deep_label": "deep mode (including daemon logs and sockets)",
     "clean_basic_label": "standard mode",
-    "cleaned_root": "Device temporary files and leftovers cleaned (with root).",
-    "cleaned_shell": "Cleaned temporary files with shell permissions.",
-    "cleaned_shell_warn": "Device currently has no root; root-owned files were not removed.",
+    "cleaned_root": "Temporary files and leftovers cleaned (root)",
+    "cleaned_shell": "Temporary files cleaned (shell)",
+    "cleaned_shell_warn": "Device currently has no root; root-owned residuals were not removed",
     "history_title": "Execution History",
     "history_empty": "No history records found.",
     "history_stored_at": "History directory:",
     "history_cleared": "Cleared %{count} history records.",
     "download_done": "%{filename} downloaded.",
-    "exploit_running": "Progress: %{line}"
+    "exploit_running": "Progress: %{line}",
+    "cleaning_traces_deep": "Performing deep cleanup..."
   }
 }
