@@ -2,8 +2,9 @@ use crate::ui::CliUi;
 use anyhow::{Context, Result};
 use colored::*;
 use rmv_core::{
-    CatalogV5, CleanOutcome, EngineOptions, ExploitEngine, GateStatus, HistoryManager, KsuVariant,
-    Persistence, Transport, TransportBuilder, TransportMode,
+    check_root_status, CatalogV5, CleanOutcome, EngineOptions, ExploitEngine, GateStatus,
+    HistoryManager, KsuVariant, Persistence, RootStatus, Transport, TransportBuilder,
+    TransportMode,
 };
 use rust_i18n::t;
 use std::path::PathBuf;
@@ -51,6 +52,52 @@ pub async fn run_check(serial: Option<String>, mode: TransportMode) -> Result<()
         dev.abogki_fingerprint.as_deref().unwrap_or("-").yellow()
     );
     println!("  {} : {}", t!("cli.boot_id"), dev.boot_id.dimmed());
+
+    let root_status = check_root_status(&transport)
+        .await
+        .unwrap_or(RootStatus::NotRooted {
+            exploit_running: false,
+        });
+    let root_desc = match &root_status {
+        RootStatus::KernelSu { su_path } => {
+            format!("{} (KernelSU Live, {})", t!("cli.root_ksu_active"), su_path)
+                .bold()
+                .green()
+        }
+        RootStatus::TempRoot {
+            su_path,
+            exploit_running,
+        } => {
+            if *exploit_running {
+                format!(
+                    "{} ({}, {})",
+                    t!("cli.root_temp_active"),
+                    su_path,
+                    t!("cli.root_exploit_running")
+                )
+                .bold()
+                .yellow()
+            } else {
+                format!("{} ({})", t!("cli.root_temp_active"), su_path)
+                    .bold()
+                    .yellow()
+            }
+        }
+        RootStatus::NotRooted { exploit_running } => {
+            if *exploit_running {
+                format!(
+                    "{} ({})",
+                    t!("cli.root_not_rooted"),
+                    t!("cli.root_exploit_running")
+                )
+                .bold()
+                .yellow()
+            } else {
+                t!("cli.root_not_rooted").dimmed()
+            }
+        }
+    };
+    println!("  {} : {}", t!("cli.root_status"), root_desc);
     println!();
 
     match dev.evaluate_gate() {
@@ -80,6 +127,11 @@ pub async fn run_check(serial: Option<String>, mode: TransportMode) -> Result<()
         }
     }
     println!();
+    if root_status.is_exploit_running() {
+        println!("[warn] {}", t!("cli.warn_exploit_running").yellow());
+    } else if root_status.is_rooted() {
+        println!("[info] {}", t!("cli.info_root_already").cyan());
+    }
     Ok(())
 }
 
@@ -117,11 +169,7 @@ pub async fn run_catalog(
                     } else {
                         kernel_build.status.bold().yellow()
                     };
-                    println!(
-                        "  {} : {}",
-                        t!("cli.payload_status"),
-                        status_display
-                    );
+                    println!("  {} : {}", t!("cli.payload_status"), status_display);
                     if let Some(file) = &kernel_build.file {
                         println!(
                             "  {} : {} ({} bytes)",

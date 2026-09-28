@@ -1,6 +1,7 @@
-use rust_i18n::t;
 use crate::error::{Result, RmvError};
+use crate::transport::Transport;
 use regex::Regex;
+use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,11 +19,174 @@ pub struct DeviceInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GateStatus {
     Vulnerable,
-    Patched {
-        version: String,
-        reason: String,
-    },
+    Patched { version: String, reason: String },
     UnsupportedVersion(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RootStatus {
+    /// 设备未获得 root 权限
+    NotRooted {
+        /// 是否检测到后台正在运行注入进程 (preload.so)
+        exploit_running: bool,
+    },
+    /// 临时提权已生效 (基于漏洞 daemon 套接字 / 临时 su 客户端)
+    TempRoot {
+        /// 响应 uid=0 的有效 su 路径 (/data/local/tmp/su, /apex/com.android.virt/bin/su 或 su)
+        su_path: String,
+        /// 是否检测到后台仍有运行中的注入探测进程
+        exploit_running: bool,
+    },
+    /// KernelSU/SukiSU 内核模块已加载并激活 (Live)
+    KernelSu {
+        /// 响应 uid=0 的 su 路径 (通常为 /system/bin/su)
+        su_path: String,
+    },
+}
+
+impl RootStatus {
+    pub fn is_rooted(&self) -> bool {
+        matches!(self, Self::TempRoot { .. } | Self::KernelSu { .. })
+    }
+
+    pub fn is_kernelsu(&self) -> bool {
+        matches!(self, Self::KernelSu { .. })
+    }
+
+    pub fn is_exploit_running(&self) -> bool {
+        match self {
+            Self::NotRooted { exploit_running } => *exploit_running,
+            Self::TempRoot {
+                exploit_running, ..
+            } => *exploit_running,
+            Self::KernelSu { .. } => false,
+        }
+    }
+
+    pub fn su_path(&self) -> Option<&str> {
+        match self {
+            Self::NotRooted { .. } => None,
+            Self::TempRoot { su_path, .. } => Some(su_path.as_str()),
+            Self::KernelSu { su_path } => Some(su_path.as_str()),
+        }
+    }
+}
+
+pub const ROOT_PROBE_CMD: &str = "\
+    echo __RMV_KSU__; cat /proc/modules 2>/dev/null | grep -i kernelsu; \
+    echo __RMV_SYS_SU__; /system/bin/su -c id 2>/dev/null; \
+    echo __RMV_TMP_SU__; /data/local/tmp/su -c id 2>/dev/null; \
+    echo __RMV_VIRT_SU__; /apex/com.android.virt/bin/su -c id 2>/dev/null; \
+    echo __RMV_BARE_SU__; su -c id 2>/dev/null; \
+    echo __RMV_MAPS__; grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1; \
+    echo __RMV_DONE__; [ -f /data/local/tmp/rmv/DONE ] && echo RMV_DONE; \
+    echo __RMV_END__";
+
+pub fn parse_root_probe(probe_output: &str) -> RootStatus {
+    let ksu_part = probe_output
+        .split("__RMV_KSU__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_SYS_SU__")
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    let sys_su_part = probe_output
+        .split("__RMV_SYS_SU__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_TMP_SU__")
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    let tmp_su_part = probe_output
+        .split("__RMV_TMP_SU__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_VIRT_SU__")
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    let virt_su_part = probe_output
+        .split("__RMV_VIRT_SU__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_BARE_SU__")
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    let bare_su_part = probe_output
+        .split("__RMV_BARE_SU__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_MAPS__")
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    let maps_part = probe_output
+        .split("__RMV_MAPS__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_DONE__")
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    let done_part = probe_output
+        .split("__RMV_DONE__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_END__")
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    let has_ksu_module = ksu_part.to_lowercase().contains("kernelsu");
+    let sys_su_ok = sys_su_part.contains("uid=0");
+    let tmp_su_ok = tmp_su_part.contains("uid=0");
+    let virt_su_ok = virt_su_part.contains("uid=0");
+    let bare_su_ok = bare_su_part.contains("uid=0");
+
+    let has_preload_mapped = maps_part.contains("/proc/");
+    let has_done_sentinel = done_part.contains("RMV_DONE");
+    let exploit_running = has_preload_mapped && !has_done_sentinel;
+
+    if (has_ksu_module && sys_su_ok) || sys_su_ok {
+        RootStatus::KernelSu {
+            su_path: "/system/bin/su".to_string(),
+        }
+    } else if has_ksu_module && bare_su_ok {
+        RootStatus::KernelSu {
+            su_path: "su".to_string(),
+        }
+    } else if tmp_su_ok {
+        RootStatus::TempRoot {
+            su_path: "/data/local/tmp/su".to_string(),
+            exploit_running,
+        }
+    } else if virt_su_ok {
+        RootStatus::TempRoot {
+            su_path: "/apex/com.android.virt/bin/su".to_string(),
+            exploit_running,
+        }
+    } else if bare_su_ok {
+        RootStatus::TempRoot {
+            su_path: "su".to_string(),
+            exploit_running,
+        }
+    } else {
+        RootStatus::NotRooted { exploit_running }
+    }
+}
+
+pub async fn check_root_status<T: Transport>(transport: &T) -> Result<RootStatus> {
+    let (_, output) = transport.exec(ROOT_PROBE_CMD).await?;
+    Ok(parse_root_probe(&output))
 }
 
 impl DeviceInfo {
@@ -33,8 +197,7 @@ impl DeviceInfo {
         proc_version: &str,
         boot_id: &str,
     ) -> Result<Self> {
-        let (kernel_version, gki_git_id, abogki_fingerprint) =
-            parse_kernel_details(proc_version)?;
+        let (kernel_version, gki_git_id, abogki_fingerprint) = parse_kernel_details(proc_version)?;
 
         Ok(Self {
             model: model.trim().to_string(),
@@ -162,5 +325,99 @@ mod tests {
             }
             _ => panic!("Expected GateStatus::Patched for backported g24b70dd1cb81"),
         }
+    }
+
+    #[test]
+    fn test_parse_root_probe_clean() {
+        let raw = "\
+__RMV_KSU__\n\
+__RMV_SYS_SU__\n/system/bin/sh: /system/bin/su: inaccessible or not found\n\
+__RMV_TMP_SU__\n/system/bin/sh: /data/local/tmp/su: not found\n\
+__RMV_VIRT_SU__\n/system/bin/sh: /apex/com.android.virt/bin/su: not found\n\
+__RMV_BARE_SU__\n/system/bin/sh: su: not found\n\
+__RMV_MAPS__\n\
+__RMV_DONE__\n\
+__RMV_END__\n";
+        let status = parse_root_probe(raw);
+        assert_eq!(
+            status,
+            RootStatus::NotRooted {
+                exploit_running: false
+            }
+        );
+        assert!(!status.is_rooted());
+        assert!(!status.is_kernelsu());
+        assert!(!status.is_exploit_running());
+        assert_eq!(status.su_path(), None);
+    }
+
+    #[test]
+    fn test_parse_root_probe_kernelsu() {
+        let raw = "\
+__RMV_KSU__\nkernelsu 12345 0 - Live 0xffffff8000000000\n\
+__RMV_SYS_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0\n\
+__RMV_TMP_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0\n\
+__RMV_VIRT_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0\n\
+__RMV_BARE_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0\n\
+__RMV_MAPS__\n\
+__RMV_DONE__\nRMV_DONE\n\
+__RMV_END__\n";
+        let status = parse_root_probe(raw);
+        assert_eq!(
+            status,
+            RootStatus::KernelSu {
+                su_path: "/system/bin/su".to_string()
+            }
+        );
+        assert!(status.is_rooted());
+        assert!(status.is_kernelsu());
+        assert_eq!(status.su_path(), Some("/system/bin/su"));
+    }
+
+    #[test]
+    fn test_parse_root_probe_temp_root_daemon() {
+        let raw = "\
+__RMV_KSU__\n\
+__RMV_SYS_SU__\n\
+__RMV_TMP_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:shell:s0\n\
+__RMV_VIRT_SU__\nsu: connect daemon: Permission denied\n\
+__RMV_BARE_SU__\nsu: connect daemon: Permission denied\n\
+__RMV_MAPS__\n/proc/18422/maps\n\
+__RMV_DONE__\n\
+__RMV_END__\n";
+        let status = parse_root_probe(raw);
+        assert_eq!(
+            status,
+            RootStatus::TempRoot {
+                su_path: "/data/local/tmp/su".to_string(),
+                exploit_running: true,
+            }
+        );
+        assert!(status.is_rooted());
+        assert!(!status.is_kernelsu());
+        assert!(status.is_exploit_running());
+        assert_eq!(status.su_path(), Some("/data/local/tmp/su"));
+    }
+
+    #[test]
+    fn test_parse_root_probe_exploit_running_not_rooted() {
+        let raw = "\
+__RMV_KSU__\n\
+__RMV_SYS_SU__\n\
+__RMV_TMP_SU__\n\
+__RMV_VIRT_SU__\n\
+__RMV_BARE_SU__\n\
+__RMV_MAPS__\n/proc/19321/maps\n\
+__RMV_DONE__\n\
+__RMV_END__\n";
+        let status = parse_root_probe(raw);
+        assert_eq!(
+            status,
+            RootStatus::NotRooted {
+                exploit_running: true
+            }
+        );
+        assert!(!status.is_rooted());
+        assert!(status.is_exploit_running());
     }
 }

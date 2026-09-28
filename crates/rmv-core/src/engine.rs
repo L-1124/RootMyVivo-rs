@@ -6,7 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 
 use crate::catalog::CatalogV5;
-use crate::device::GateStatus;
+use crate::device::{check_root_status, GateStatus};
 use crate::error::{Result, RmvError};
 use crate::event::{EngineEvent, EngineStatus, LogLevel, Phase};
 use crate::history::{HistoryManager, RunRecord};
@@ -401,9 +401,9 @@ impl ExploitEngine {
             desc: t!("log.exploit_start").to_string(),
         });
 
-        // 检查是否已拥有 root
-        let (_, pre_check) = transport.exec("su -c id 2>/dev/null").await?;
-        let mut is_rooted = pre_check.contains("uid=0");
+        // 检查是否已拥有 root 或后台有运行中的注入探测
+        let root_status = check_root_status(transport).await?;
+        let mut is_rooted = root_status.is_rooted();
 
         if is_rooted {
             let _ = event_tx.send(EngineEvent::Log {
@@ -412,10 +412,7 @@ impl ExploitEngine {
             });
         } else {
             // 上一轮客户端超时退出时载荷常仍在探测：此时附加监听，避免重复注入
-            let (_, existing) = transport
-                .exec("grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1")
-                .await?;
-            if existing.contains("/proc/") {
+            if root_status.is_exploit_running() {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Warn,
                     line: t!("log.exploit_attached").to_string(),
@@ -447,7 +444,7 @@ impl ExploitEngine {
                         "tail -n 15 /data/local/tmp/rmv/live.log 2>/dev/null; \
                          echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE 2>/dev/null; \
                          echo __RMV_ALIVE__; grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1; \
-                         echo __RMV_SU__; su -c id 2>/dev/null; \
+                         echo __RMV_SU__; /system/bin/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null || /apex/com.android.virt/bin/su -c id 2>/dev/null || su -c id 2>/dev/null; \
                          echo __RMV_BOOTID__; cat /proc/sys/kernel/random/boot_id 2>/dev/null; \
                          echo __RMV_END__",
                     )

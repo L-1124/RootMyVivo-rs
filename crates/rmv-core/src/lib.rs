@@ -20,7 +20,9 @@ pub mod transport;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use catalog::{CatalogV5, KernelBuild, PayloadFile};
-pub use device::{DeviceInfo, GateStatus};
+pub use device::{
+    check_root_status, parse_root_probe, DeviceInfo, GateStatus, RootStatus, ROOT_PROBE_CMD,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine::{EngineOptions, ExploitEngine};
 pub use error::{Result, RmvError};
