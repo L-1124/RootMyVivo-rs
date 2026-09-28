@@ -36,7 +36,7 @@ graph TD
         Stage2 --> Stage3[3. Payload Verify: ELF inspection + target device check]
         Stage3 --> Stage4[4. Injection: push_bytes to /data/local/tmp/rmv + LD_PRELOAD]
         Stage4 --> Stage5[5. Polling Loop: live.log + DONE sentinel + 4-path su cascade]
-        Stage5 --> Stage6[6. KSU Late-Load: KsuOrchestrator ksud + AVF wrapper repair]
+        Stage5 --> Stage6[6. KSU Late-Load: KsuOrchestrator ksud + su wrapper check]
         Stage6 --> Stage7[7. Cleanup & History: Persistence::clean_traces + HistoryManager]
     end
 ```
@@ -46,12 +46,12 @@ graph TD
 ## Key Features
 
 - **Zero ADB Dependency**: Native USB driver (`nusb`) and native Wi-Fi debugging client (`rustls` + SPAKE2) compiled directly into the binary.
-- **Smart Root Status & Process Liveness Detection**: Single-roundtrip probe (`ROOT_PROBE_CMD`) surveys `/proc/modules`, `/system/bin/su`, `/data/local/tmp/su`, `/apex/com.android.virt/bin/su`, process maps, and sentinel files. If the device already has root, the exploit stage is automatically skipped to prevent kernel panic from redundant injection.
-- **Cascading su Resolution**: Polling probe cascades through four paths (`/system/bin/su` || `/data/local/tmp/su` || `/apex/com.android.virt/bin/su` || `su`) to ensure instant detection even when standard `su` is masked by stale wrappers.
+- **Smart Root Status & Process Liveness Detection**: Single-roundtrip probe surveys active kernel modules, canonical su paths, process maps, and sentinel files. If the device already has root, the exploit stage is automatically skipped to prevent kernel panic from redundant injection.
+- **Cascading su Resolution**: Polling probe cascades through available su binary paths (`/system/bin/su` || `/data/local/tmp/su` || `su`) to ensure instant detection once root privileges become active.
 - **Multi-tier Remote Catalog & Local Mirrors**: Dynamically resolves payload catalogues across four tiers (`--catalog-url` CLI flag > `RMV_CATALOG_URL` env var > `~/.rmv/catalog_url` persistent config > official GitHub & jsDelivr mirrors).
 - **Strict Kernel Fingerprinting**: Payloads are matched strictly against kernel build fingerprints (`abogki*`), never by consumer marketing names alone.
-- **AVF Path Self-Healing**: Automatically repairs broken `/apex/com.android.virt/bin/su` tmpfs overlays by deploying a 42-byte forwarding wrapper (`exec /system/bin/su "$@"`) with proper SELinux context (`u:object_r:system_file:s0`).
-- **Complete Trace Teardown**: `rmv clean` restores stock AVF binaries, removes `/data/local/tmp/rmv`, `/data/adb/rmv`, and terminates orphaned payload daemons.
+- **Minimal Device Footprint**: Payloads operate strictly under `/data/local/tmp/rmv` without modifying system partitions or creating fragile filesystem mounts.
+- **Complete Trace Teardown**: `rmv clean` restores stock runtime state, sweeps `/data/local/tmp/rmv`, `/data/adb/rmv`, and terminates orphaned payload daemons.
 - **Bilingual Interface**: Full localization in Simplified Chinese (`zh-CN`) and English (`en`), dynamically selecting system locale or manual `-L` override.
 
 ---
@@ -196,11 +196,10 @@ rmv run --dry-run
 ### 5. Clean Device Residues (`rmv clean`)
 
 Sweeps all injection and runtime traces from the device:
-- Unmounts `/apex/com.android.virt/bin` tmpfs overlays (restoring stock AVF binaries).
 - Removes `/data/local/tmp/rmv` (`preload.so`, `ksud`, `live.log`, `DONE`).
 - Cleans legacy root residues (`/data/local/tmp/su`, `/data/local/tmp/temp_su.sock`, `su_daemon.log`).
 - Safely terminates stale `su --daemon` processes using brackets pattern matching (`[s]u`).
-
+- Unmounts any lingering tmpfs overlays to restore pristine stock runtime state.
 ```bash
 rmv clean
 ```
