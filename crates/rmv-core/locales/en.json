@@ -24,12 +24,15 @@
     "http": "Network request failed: %{message}",
     "json": "Data parsing error: %{message}",
     "local_payload_not_found": "Specified local payload file does not exist: %{path}",
-    "pairing_failed": "Wireless pairing failed"
+    "pairing_failed": "Wireless pairing failed",
+    "boot_poisoned": "Kernel slab memory was poisoned by a previous failed exploit attempt. Please reboot the device before retrying.",
+    "device_rebooted": "Device rebooted unexpectedly during exploit execution (kernel panic suspected)."
   },
   "gate": {
     "cve_patched_6_6": "Patched in Linux 6.6.140+",
     "cve_patched_6_1": "Patched in Linux 6.1.145+",
     "cve_patched_6_12": "Patched in Linux 6.12.86+",
+    "cve_patched_backport": "CVE-2026-43499 patched by vendor or GKI backport",
     "unsupported_version": "Kernel version is outside the vulnerability scope"
   },
   "log": {
@@ -56,6 +59,8 @@
     "gate_mismatch": "Payload lacks target fingerprint (identifies as: %{labels})",
     "force_payload_warn": "Warning: continuing with unverified payload due to --force-payload.",
     "dry_run_done": "Dry-run complete. Selected payload: %{path}",
+    "boot_poisoned": "Kernel memory was poisoned from previous attempt; aborting to prevent system panic.",
+    "device_rebooted": "Device reboot detected via boot_id change (kernel panic suspected).",
     "dry_run_complete_msg": "Dry-run completed without deploying to device. Payload: %{path}",
     "exploit_attached": "Attached to existing in-progress exploit process.",
     "exploit_gone": "Exploit process exited before completing.",

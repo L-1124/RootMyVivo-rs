@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use crate::error::{Result, RmvError};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -56,7 +57,16 @@ impl DeviceInfo {
                 if patch >= 140 {
                     GateStatus::Patched {
                         version: ver_str,
-                        reason: "CVE-2026-43499 已在 Linux 6.6.140+ 修复".to_string(),
+                        reason: t!("gate.cve_patched_6_6").to_string(),
+                    }
+                } else if self
+                    .gki_git_id
+                    .as_deref()
+                    .map_or(false, |g| g == "g24b70dd1cb81")
+                {
+                    GateStatus::Patched {
+                        version: ver_str,
+                        reason: t!("gate.cve_patched_backport").to_string(),
                     }
                 } else {
                     GateStatus::Vulnerable
@@ -66,7 +76,7 @@ impl DeviceInfo {
                 if patch >= 145 {
                     GateStatus::Patched {
                         version: ver_str,
-                        reason: "CVE-2026-43499 已在 Linux 6.1.145+ 修复".to_string(),
+                        reason: t!("gate.cve_patched_6_1").to_string(),
                     }
                 } else {
                     GateStatus::Vulnerable
@@ -76,7 +86,7 @@ impl DeviceInfo {
                 if patch >= 86 {
                     GateStatus::Patched {
                         version: ver_str,
-                        reason: "CVE-2026-43499 已在 Linux 6.12.86+ 修复".to_string(),
+                        reason: t!("gate.cve_patched_6_12").to_string(),
                     }
                 } else {
                     GateStatus::Vulnerable
@@ -102,7 +112,7 @@ pub fn parse_kernel_details(
     let minor: u32 = caps[2].parse().unwrap_or(0);
     let patch: u32 = caps[3].parse().unwrap_or(0);
 
-    let re_gki = Regex::new(r"-(g[0-9a-f]{10,14})(-|_)").unwrap();
+    let re_gki = Regex::new(r"-(g[0-9a-f]{10,14})(?:[-_\s]|$)").unwrap();
     let gki_git_id = re_gki.captures(proc_version).map(|c| c[1].to_string());
 
     let re_abogki = Regex::new(r"(abogki\d+)").unwrap();
@@ -135,6 +145,22 @@ mod tests {
         match dev.evaluate_gate() {
             GateStatus::Patched { version, .. } => assert_eq!(version, "6.6.140"),
             _ => panic!("Expected GateStatus::Patched"),
+        }
+    }
+
+    #[test]
+    fn test_parse_backport_patched_kernel() {
+        let raw = "Linux version 6.6.127-android15-8-g24b70dd1cb81 (build-user@build-host) #1 SMP";
+        let dev = DeviceInfo::parse("PD2520", "pd2520", "vivo", raw, "boot-0").unwrap();
+
+        assert_eq!(dev.kernel_version, (6, 6, 127));
+        assert_eq!(dev.gki_git_id.as_deref(), Some("g24b70dd1cb81"));
+        match dev.evaluate_gate() {
+            GateStatus::Patched { version, reason } => {
+                assert_eq!(version, "6.6.127");
+                assert!(reason.contains("CVE-2026-43499"));
+            }
+            _ => panic!("Expected GateStatus::Patched for backported g24b70dd1cb81"),
         }
     }
 }

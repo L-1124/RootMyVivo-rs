@@ -29,6 +29,8 @@ pub enum RmvError {
         last_attempt: Option<u32>,
         log_tail: String,
     },
+    BootPoisoned,
+    DeviceRebooted,
     ExploitFailed(String),
     KsuFailed(String),
     Cancelled,
@@ -101,6 +103,12 @@ impl fmt::Display for RmvError {
             }
             Self::ExploitTimeout { .. } => {
                 write!(f, "{}", rust_i18n::t!("error.exploit_timeout"))
+            }
+            Self::BootPoisoned => {
+                write!(f, "{}", rust_i18n::t!("error.boot_poisoned"))
+            }
+            Self::DeviceRebooted => {
+                write!(f, "{}", rust_i18n::t!("error.device_rebooted"))
             }
             Self::ExploitFailed(s) => {
                 write!(f, "{}", rust_i18n::t!("error.exploit_failed", message = s))

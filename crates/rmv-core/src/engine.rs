@@ -234,6 +234,15 @@ impl ExploitEngine {
                     })?;
             market_hint = Some(device_entry.market_name.clone());
 
+            // Block execution if the catalog marks this build as patched
+            if kernel_build.status.eq_ignore_ascii_case("patched") {
+                let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+                return Err(RmvError::UnsupportedKernel {
+                    version: device.kernel_full.clone(),
+                    reason: t!("gate.cve_patched_backport").to_string(),
+                });
+            }
+
             let file_info =
                 kernel_build
                     .file
@@ -427,21 +436,22 @@ impl ExploitEngine {
             let attempt_re = regex::Regex::new(r"rmv exploit attempt (\d+)/(\d+)")
                 .expect("static attempt pattern");
             let mut payload_alive = false;
-
+            let mut boot_poisoned = false;
             while elapsed_sec < timeout_limit {
                 sleep(Duration::from_secs(2)).await;
                 elapsed_sec += 2;
 
-                // 单次往返取回：尾部日志 + 完成哨兵 + 进程存活 + su 探针
+                // Single round-trip probe: logs, completion sentinel, liveness, su, boot_id
                 let (_, probe) = transport
                     .exec(
                         "tail -n 15 /data/local/tmp/rmv/live.log 2>/dev/null; \
                          echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE 2>/dev/null; \
                          echo __RMV_ALIVE__; grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1; \
-                         echo __RMV_SU__; su -c id 2>/dev/null; echo __RMV_END__",
+                         echo __RMV_SU__; su -c id 2>/dev/null; \
+                         echo __RMV_BOOTID__; cat /proc/sys/kernel/random/boot_id 2>/dev/null; \
+                         echo __RMV_END__",
                     )
                     .await?;
-
                 let tail_part = probe
                     .split("__RMV_DONE__")
                     .next()
@@ -470,12 +480,30 @@ impl ExploitEngine {
                     .split("__RMV_SU__")
                     .nth(1)
                     .unwrap_or("")
+                    .split("__RMV_BOOTID__")
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                let bootid_part = probe
+                    .split("__RMV_BOOTID__")
+                    .nth(1)
+                    .unwrap_or("")
                     .split("__RMV_END__")
                     .next()
                     .unwrap_or("")
                     .trim()
                     .to_string();
 
+                // Detect unexpected reboot or kernel panic
+                if !bootid_part.is_empty() && bootid_part != device.boot_id {
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Error,
+                        line: t!("log.device_rebooted").to_string(),
+                    });
+                    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+                    return Err(RmvError::DeviceRebooted);
+                }
                 if !tail_part.is_empty() && tail_part != last_log_tail {
                     last_log_tail = tail_part.clone();
                     if let Some(caps) = attempt_re.captures(&tail_part) {
@@ -494,6 +522,10 @@ impl ExploitEngine {
                         max: Some(options.attempts),
                         lines,
                     });
+                }
+
+                if tail_part.contains("boot_poisoned") {
+                    boot_poisoned = true;
                 }
 
                 payload_alive = alive_part.contains("/proc/");
@@ -519,6 +551,15 @@ impl ExploitEngine {
             }
 
             if !is_rooted {
+                if boot_poisoned {
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Error,
+                        line: t!("log.boot_poisoned").to_string(),
+                    });
+                    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+                    return Err(RmvError::BootPoisoned);
+                }
+
                 if payload_alive {
                     let _ = event_tx.send(EngineEvent::Log {
                         level: LogLevel::Warn,

@@ -24,12 +24,15 @@
     "http": "网络请求失败: %{message}",
     "json": "数据解析错误: %{message}",
     "local_payload_not_found": "指定的本地载荷文件不存在: %{path}",
-    "pairing_failed": "无线配对失败"
+    "pairing_failed": "无线配对失败",
+    "boot_poisoned": "内核 Slab 内存已被上一轮提权污染 (boot poisoned)，请重启手机后再试。",
+    "device_rebooted": "设备在提权执行过程中发生意外重启 (怀疑内核发生 Panic)。"
   },
   "gate": {
     "cve_patched_6_6": "已在 Linux 6.6.140+ 修复",
     "cve_patched_6_1": "已在 Linux 6.1.145+ 修复",
     "cve_patched_6_12": "已在 Linux 6.12.86+ 修复",
+    "cve_patched_backport": "该内核已由厂商或 GKI 补丁修复 (CVE-2026-43499)",
     "unsupported_version": "内核版本不在目标漏洞利用范围"
   },
   "log": {
@@ -56,6 +59,8 @@
     "gate_mismatch": "载荷未内嵌本机内核指纹（指向标签: %{labels}）。",
     "force_payload_warn": "提示: 已指定 --force-payload，强制跳过载荷校验。",
     "dry_run_done": "模拟运行完成。选中载荷: %{path}",
+    "boot_poisoned": "检测到内核内存已被污染 (boot poisoned)，为防止整机崩溃已终止执行。",
+    "device_rebooted": "检测到设备已意外重启 (boot_id 发生变化，怀疑内核发生 Panic)。",
     "dry_run_complete_msg": "模拟完成，未向设备下发文件。载荷: %{path}",
     "exploit_attached": "检测到后台已有运行中的提权进程，已直接附加监听。",
     "exploit_gone": "提权进程已退出，未达成 Root 状态。",

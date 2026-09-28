@@ -112,10 +112,15 @@ pub async fn run_catalog(
                         t!("cli.matched_device"),
                         device_entry.market_name.bold().green()
                     );
+                    let status_display = if kernel_build.status.eq_ignore_ascii_case("patched") {
+                        kernel_build.status.bold().red()
+                    } else {
+                        kernel_build.status.bold().yellow()
+                    };
                     println!(
                         "  {} : {}",
                         t!("cli.payload_status"),
-                        kernel_build.status.bold().yellow()
+                        status_display
                     );
                     if let Some(file) = &kernel_build.file {
                         println!(
