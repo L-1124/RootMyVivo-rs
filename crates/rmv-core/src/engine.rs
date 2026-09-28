@@ -589,20 +589,36 @@ impl ExploitEngine {
             } else {
                 5
             };
-            let _ = event_tx.send(EngineEvent::Step {
-                phase: Phase::Ksu,
-                index: ksu_step,
-                total: total_steps,
-                desc: t!("log.ksu_start", name = options.ksu_variant.display_name()).to_string(),
-            });
+            let is_ksu_live = KsuOrchestrator::is_module_loaded(transport)
+                .await
+                .unwrap_or(false);
+            if is_ksu_live {
+                let _ = event_tx.send(EngineEvent::Step {
+                    phase: Phase::Ksu,
+                    index: ksu_step,
+                    total: total_steps,
+                    desc: t!("log.ksu_already_active").to_string(),
+                });
+                let _ = event_tx.send(EngineEvent::Log {
+                    level: LogLevel::Ok,
+                    line: t!("log.ksu_already_active").to_string(),
+                });
+            } else {
+                let _ = event_tx.send(EngineEvent::Step {
+                    phase: Phase::Ksu,
+                    index: ksu_step,
+                    total: total_steps,
+                    desc: t!("log.ksu_start", name = options.ksu_variant.display_name())
+                        .to_string(),
+                });
 
-            let host_apk = options.manager_apk.as_deref();
-            KsuOrchestrator::late_load(transport, options.ksu_variant, None, host_apk).await?;
-            let _ = event_tx.send(EngineEvent::Log {
-                level: LogLevel::Ok,
-                line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),
-            });
-
+                let host_apk = options.manager_apk.as_deref();
+                KsuOrchestrator::late_load(transport, options.ksu_variant, None, host_apk).await?;
+                let _ = event_tx.send(EngineEvent::Log {
+                    level: LogLevel::Ok,
+                    line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),
+                });
+            }
             // 自动检测并包装被抢占的 su 路径
             let repaired = KsuOrchestrator::apply_su_wrapper_fix(transport).await?;
             for path in repaired {

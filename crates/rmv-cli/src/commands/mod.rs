@@ -59,11 +59,9 @@ pub async fn run_check(serial: Option<String>, mode: TransportMode) -> Result<()
             exploit_running: false,
         });
     let root_desc = match &root_status {
-        RootStatus::KernelSu { su_path } => {
-            format!("{} (KernelSU Live, {})", t!("cli.root_ksu_active"), su_path)
-                .bold()
-                .green()
-        }
+        RootStatus::KernelSu { su_path } => format!("{} ({})", t!("cli.root_ksu_active"), su_path)
+            .bold()
+            .green(),
         RootStatus::TempRoot {
             su_path,
             exploit_running,
@@ -129,8 +127,6 @@ pub async fn run_check(serial: Option<String>, mode: TransportMode) -> Result<()
     println!();
     if root_status.is_exploit_running() {
         println!("[warn] {}", t!("cli.warn_exploit_running").yellow());
-    } else if root_status.is_rooted() {
-        println!("[info] {}", t!("cli.info_root_already").cyan());
     }
     Ok(())
 }
