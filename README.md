@@ -103,18 +103,18 @@ cargo check -p rmv-wasm --target wasm32-unknown-unknown
 ## Usage Guide
 
 ```text
-面向锁定 Bootloader 的 vivo/iQOO 机型，提供全自动免解锁临时提权与 KernelSU 动态加载。
+A lightweight tool to acquire unlock-free temporary root, load KernelSU, and configure local ADB on vivo/iQOO devices with locked bootloaders.
 
 Usage: rmv [OPTIONS] <COMMAND>
 
 Commands:
-  check    检测设备信息与漏洞支持状态
-  catalog  查询、配置并匹配在线载荷编目
-  pair     使用配对码与 Android 11+ 无线调试进行安全配对
-  run      执行提权并加载 KernelSU
-  clean    清理设备上的临时文件与残留
-  history  查看或管理运行历史
-  help     打印命令帮助信息
+  check    Inspect connected device and verify vulnerability status
+  catalog  Fetch, configure, and match payloads from remote catalog
+  pair     Pair with Android 11+ wireless debugging using pairing code
+  run      Acquire temporary root and load KernelSU
+  clean    Clean up temporary runtime files on device
+  history  View or manage execution history logs
+  help     Print help for command or subcommand
 ```
 
 ### 1. Inspect Device & Root Status (`rmv check`)
@@ -127,19 +127,19 @@ rmv check
 
 **Example Output:**
 ```text
-正在连接设备...
+Connecting to device...
 
-设备信息
-  设备代号 : PD2408
-  机型名称 : V2408A
-  品牌     : vivo
-  内核版本 : Linux 6.6.89
-  GKI 构建 : g1f71897ac249
-  构建指纹 : abogki467805059
-  Boot ID  : 50c209e2-1c87-45d5-9019-c103468768c3
-  Root 状态 : KernelSU Live (/system/bin/su)
+Device Information
+  Device      : PD2408
+  Model       : V2408A
+  Brand       : vivo
+  Kernel      : Linux 6.6.89
+  GKI Build   : g1f71897ac249
+  Fingerprint : abogki467805059
+  Boot ID     : 50c209e2-1c87-45d5-9019-c103468768c3
+  Root Status : KernelSU Live (/system/bin/su)
 
-  支持状态 : 支持 (CVE-2026-43499 未修补)
+  Status      : Supported (CVE-2026-43499 unpatched)
 ```
 
 ### 2. Manage Remote Payload Catalog (`rmv catalog`)
