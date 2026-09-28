@@ -255,6 +255,17 @@ rmv -t cli check
 
 ---
 
+## Acknowledgements
+
+`rootmyvivo-rs` would not be possible without the foundational research, tools, and infrastructure created by the upstream `RootMyVivo` open-source ecosystem and its contributors:
+
+- **[zenyxx-xd/RootMyVivo](https://github.com/zenyxx-xd/RootMyVivo)**: Upstream Android host application, Shizuku integration, and device orchestration architecture.
+- **[zenyxx-xd/RootMyVivo-Payloads](https://github.com/zenyxx-xd/RootMyVivo-Payloads)**: Central payload distribution repository, catalog v5 specification (`catalog/devices.json`), and binary mirrors.
+- **[zenyxx-xd/RootMyVivo-Exploit](https://github.com/zenyxx-xd/RootMyVivo-Exploit)**: Hardened CVE-2026-43499 (GhostLock futex PI UAF) injection payload source tree.
+- The broader KernelSU, SukiSU, and Android kernel vulnerability research community.
+
+---
+
 ## Disclaimer
 
 This tool is developed for security research, kernel vulnerability verification, and authorized hardware maintenance on owned devices only. Root permissions grant full access to system subsystems; use responsibly.
