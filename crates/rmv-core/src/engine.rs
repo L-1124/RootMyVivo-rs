@@ -285,9 +285,8 @@ impl ExploitEngine {
 
         // 载荷身份闸门：拒绝其它机型或其它内核构建的载荷
         let mut gate = verify_payload_file(&payload_local_path, &device);
-        if !matches!(&gate, Ok(identity) if identity.has_device_fingerprint)
-            && !options.payload_dirs.is_empty()
-        {
+        let is_gate_matched = matches!(&gate, Ok(identity) if identity.has_device_fingerprint || (device.abogki_fingerprint.is_none() && identity.foreign_labels(&device).is_empty()));
+        if !is_gate_matched && !options.payload_dirs.is_empty() {
             if let Some(local) =
                 find_local_payload(&options.payload_dirs, &device, market_hint.as_deref())
             {
@@ -300,47 +299,57 @@ impl ExploitEngine {
             }
         }
 
-        match gate {
-            Ok(identity) if identity.has_device_fingerprint => {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Ok,
-                    line: t!(
-                        "log.gate_verified",
-                        fingerprint = device.abogki_fingerprint.as_deref().unwrap_or("-")
-                    )
-                    .to_string(),
-                });
-            }
+        let verified = match &gate {
             Ok(identity) => {
-                if !options.force_payload {
-                    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
-                    return Err(RmvError::PayloadDeviceMismatch {
-                        expected: device
-                            .abogki_fingerprint
-                            .clone()
-                            .unwrap_or_else(|| device.device.clone()),
-                        found: if identity.labels.is_empty() {
-                            "unlabeled".to_string()
-                        } else {
-                            identity.labels.join(", ")
-                        },
-                        labels: identity.labels.join(", "),
+                identity.has_device_fingerprint
+                    || (device.abogki_fingerprint.is_none()
+                        && identity.foreign_labels(&device).is_empty())
+            }
+            Err(_) => false,
+        };
+
+        if verified {
+            let fp_display = device
+                .abogki_fingerprint
+                .as_deref()
+                .unwrap_or(&device.device);
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Ok,
+                line: t!("log.gate_verified", fingerprint = fp_display).to_string(),
+            });
+        } else {
+            match gate {
+                Ok(identity) => {
+                    if !options.force_payload {
+                        let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+                        return Err(RmvError::PayloadDeviceMismatch {
+                            expected: device
+                                .abogki_fingerprint
+                                .clone()
+                                .unwrap_or_else(|| device.device.clone()),
+                            found: if identity.labels.is_empty() {
+                                "unlabeled".to_string()
+                            } else {
+                                identity.labels.join(", ")
+                            },
+                            labels: identity.labels.join(", "),
+                        });
+                    }
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Warn,
+                        line: t!("log.force_payload_warn").to_string(),
                     });
                 }
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Warn,
-                    line: t!("log.force_payload_warn").to_string(),
-                });
-            }
-            Err(e) => {
-                if !options.force_payload {
-                    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
-                    return Err(e);
+                Err(e) => {
+                    if !options.force_payload {
+                        let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+                        return Err(e);
+                    }
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Warn,
+                        line: t!("log.force_payload_warn").to_string(),
+                    });
                 }
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Warn,
-                    line: t!("log.force_payload_warn").to_string(),
-                });
             }
         }
 

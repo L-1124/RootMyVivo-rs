@@ -1,7 +1,7 @@
-use rust_i18n::t;
-use std::path::{Path, PathBuf};
 use regex::bytes::Regex;
+use rust_i18n::t;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 use crate::device::DeviceInfo;
 use crate::error::{Result, RmvError};
@@ -21,9 +21,14 @@ impl PayloadIdentity {
     /// 载荷是否自称属于别的机型（存在标签，但不含本机指纹）。
     pub fn foreign_labels(&self, device: &DeviceInfo) -> Vec<String> {
         let own = device.device.to_lowercase();
+        let own_stripped = own.strip_prefix('d').unwrap_or(&own);
         self.labels
             .iter()
-            .filter(|l| !l.to_lowercase().starts_with(&own))
+            .filter(|l| {
+                let lower = l.to_lowercase();
+                let lower_stripped = lower.strip_prefix('d').unwrap_or(&lower);
+                !lower.starts_with(&own) && !lower_stripped.starts_with(own_stripped)
+            })
             .cloned()
             .collect()
     }
@@ -32,7 +37,7 @@ impl PayloadIdentity {
 /// 在载荷字节流中扫描身份特征。全部按 ASCII 子串处理，天然容忍二进制噪声。
 pub fn inspect_payload(bytes: &[u8]) -> PayloadIdentity {
     let re_abogki = Regex::new(r"abogki[0-9]{6,12}").expect("static pattern");
-    let re_label = Regex::new(r"pd[0-9]{4}[a-z0-9._-]{4,40}").expect("static pattern");
+    let re_label = Regex::new(r"(?:d?pd)[0-9]{4}[a-z0-9._-]{4,40}").expect("static pattern");
 
     let mut abogki: Vec<String> = re_abogki
         .find_iter(bytes)
@@ -65,7 +70,14 @@ pub fn inspect_payload(bytes: &[u8]) -> PayloadIdentity {
 /// - 两者都没有（静态库被剥离）时无法判定，放行但标记未确认。
 pub fn verify_payload_file(path: &Path, device: &DeviceInfo) -> Result<PayloadIdentity> {
     let bytes = std::fs::read(path).map_err(|e| {
-        RmvError::ExploitFailed(t!("error.read_payload_failed", path = path.display().to_string(), error = e.to_string()).to_string())
+        RmvError::ExploitFailed(
+            t!(
+                "error.read_payload_failed",
+                path = path.display().to_string(),
+                error = e.to_string()
+            )
+            .to_string(),
+        )
     })?;
 
     let mut identity = inspect_payload(&bytes);
@@ -150,7 +162,10 @@ fn contains_fingerprint(path: &Path, fingerprint: &str) -> bool {
     let Ok(bytes) = std::fs::read(path) else {
         return false;
     };
-    inspect_payload(&bytes).abogki.iter().any(|a| a == fingerprint)
+    inspect_payload(&bytes)
+        .abogki
+        .iter()
+        .any(|a| a == fingerprint)
 }
 
 /// 在本地载荷库中查找与目标设备匹配的载荷。
@@ -234,6 +249,19 @@ mod tests {
         let blob = b"pd2408-bp2a.250605.031.a3".to_vec();
         let id = inspect_payload(&blob);
         assert!(id.foreign_labels(&dev()).is_empty());
+    }
+
+    #[test]
+    fn dpd_tablet_device_label_is_not_foreign() {
+        let raw = "Linux version 6.1.145-android14-11-maybe-dirty (build-user@build-host) (clang version 17.0.2) #1 SMP PREEMPT";
+        let tablet = DeviceInfo::parse("iPA2556", "DPD2437", "vivo", raw, "boot-0").unwrap();
+        let blob1 = b"pd2437-6.1.145-android14-11-mcast".to_vec();
+        let id1 = inspect_payload(&blob1);
+        assert!(id1.foreign_labels(&tablet).is_empty());
+
+        let blob2 = b"dpd2437-6.1.145-android14-11-mcast".to_vec();
+        let id2 = inspect_payload(&blob2);
+        assert!(id2.foreign_labels(&tablet).is_empty());
     }
 
     #[test]

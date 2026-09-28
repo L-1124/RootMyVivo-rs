@@ -236,12 +236,15 @@ impl DeviceInfo {
                 }
             }
             (6, 1) => {
-                if patch >= 145 {
+                if patch >= 145 && self.gki_git_id.is_some() {
                     GateStatus::Patched {
                         version: ver_str,
                         reason: t!("gate.cve_patched_6_1").to_string(),
                     }
                 } else {
+                    // 6.1.145+ OEM non-GKI / "-maybe-dirty" builds (e.g. DPD2437
+                    // 6.1.145-android14-11-maybe-dirty without GKI git-id) keep the
+                    // vulnerable remove_waiter: verified by boot.img disassembly.
                     GateStatus::Vulnerable
                 }
             }
@@ -324,6 +327,29 @@ mod tests {
                 assert!(reason.contains("CVE-2026-43499"));
             }
             _ => panic!("Expected GateStatus::Patched for backported g24b70dd1cb81"),
+        }
+    }
+
+    #[test]
+    fn test_parse_dpd2437_6_1_145_vulnerable() {
+        let raw = "Linux version 6.1.145-android14-11-maybe-dirty (build-user@build-host) (clang version 17.0.2) #1 SMP PREEMPT Sat Aug 1 12:00:00 CST 2026";
+        let dev = DeviceInfo::parse("iPA2556", "DPD2437", "vivo", raw, "boot-0").unwrap();
+
+        assert_eq!(dev.kernel_version, (6, 1, 145));
+        assert_eq!(dev.gki_git_id, None);
+        assert_eq!(dev.evaluate_gate(), GateStatus::Vulnerable);
+    }
+
+    #[test]
+    fn test_parse_6_1_145_gki_patched() {
+        let raw = "Linux version 6.1.145-android14-11-gabcdef123456 (build-user@build-host) #1 SMP PREEMPT";
+        let dev = DeviceInfo::parse("test", "test", "test", raw, "boot-0").unwrap();
+
+        assert_eq!(dev.kernel_version, (6, 1, 145));
+        assert_eq!(dev.gki_git_id.as_deref(), Some("gabcdef123456"));
+        match dev.evaluate_gate() {
+            GateStatus::Patched { version, .. } => assert_eq!(version, "6.1.145"),
+            _ => panic!("Expected GateStatus::Patched for canonical GKI 6.1.145+"),
         }
     }
 
