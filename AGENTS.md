@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`rootmyvivo-rs` is a cross-platform, pure-Rust toolchain providing unlock-free temporary root and KernelSU/SukiSU LKM late-loading for bootloader-locked vivo/iQOO devices exploiting CVE-2026-43499.
+`RootMyVivo-rs` is a cross-platform, pure-Rust toolchain providing unlock-free temporary root and KernelSU/SukiSU LKM late-loading for bootloader-locked vivo/iQOO devices exploiting CVE-2026-43499.
 The project completely removes dependencies on Google's external `adb.exe` binary:
 - **Desktop (Windows / Linux / macOS)**: Direct hardware communication via pure-Rust USB (`nusb`) and Android 11+ Wireless Debugging (`rustls` TLS 1.3 + mDNS + SPAKE2 pairing).
 - **Web (Browser / WebAssembly)**: WebUSB client via `rmv-wasm` compiling to `wasm32-unknown-unknown`.

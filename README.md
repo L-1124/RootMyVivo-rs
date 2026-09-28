@@ -1,4 +1,4 @@
-# rootmyvivo-rs
+# RootMyVivo-rs
 
 [![Rust Edition](https://img.shields.io/badge/edition-2021-orange.svg)](https://doc.rust-lang.org/edition-guide/rust-2021/)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](Cargo.toml)
@@ -7,7 +7,7 @@
 
 A cross-platform, pure-Rust toolchain providing **unlock-free temporary root** and **KernelSU / SukiSU LKM late-loading** for bootloader-locked vivo and iQOO devices exploiting **CVE-2026-43499**.
 
-`rootmyvivo-rs` completely eliminates external runtime dependencies on Google's `adb.exe` binary:
+`RootMyVivo-rs` completely eliminates external runtime dependencies on Google's `adb.exe` binary:
 - **Desktop (Windows / Linux / macOS)**: Direct hardware communication via pure-Rust USB (`nusb`) and Android 11+ Wireless Debugging (`rustls` TLS 1.3 + mDNS + SPAKE2 pairing).
 - **Web (Browser / WebAssembly)**: Client-side WebUSB via `rmv-wasm` compiling to `wasm32-unknown-unknown`.
 - **Legacy Fallback**: Automatic failover to `AdbCliTransport` when an ADB server daemon is already running.
@@ -144,7 +144,7 @@ rmv check
 
 ### 2. Manage Remote Payload Catalog (`rmv catalog`)
 
-`rootmyvivo-rs` supports custom remote catalog mirrors, ideal for private mirrors, offline testing, or third-party device entries:
+`RootMyVivo-rs` supports custom remote catalog mirrors, ideal for private mirrors, offline testing, or third-party device entries:
 
 ```bash
 # Show currently active catalog URL and configuration source
@@ -242,7 +242,7 @@ rmv -t cli check
 
 ## Vulnerability & Compatibility Gate
 
-`rootmyvivo-rs` evaluates CVE-2026-43499 patch status during device discovery:
+`RootMyVivo-rs` evaluates CVE-2026-43499 patch status during device discovery:
 
 | Kernel Series | Vulnerable (Exploitable) | Patched (Execution Halted) |
 |---|---|---|
@@ -257,7 +257,7 @@ rmv -t cli check
 
 ## Acknowledgements
 
-`rootmyvivo-rs` would not be possible without the foundational research, tools, and infrastructure created by the upstream `RootMyVivo` open-source ecosystem and its contributors:
+`RootMyVivo-rs` would not be possible without the foundational research, tools, and infrastructure created by the upstream `RootMyVivo` open-source ecosystem and its contributors:
 
 - **[zenyxx-xd/RootMyVivo](https://github.com/zenyxx-xd/RootMyVivo)**: Upstream Android host application, Shizuku integration, and device orchestration architecture.
 - **[zenyxx-xd/RootMyVivo-Payloads](https://github.com/zenyxx-xd/RootMyVivo-Payloads)**: Central payload distribution repository, catalog v5 specification (`catalog/devices.json`), and binary mirrors.
