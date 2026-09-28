@@ -152,6 +152,10 @@ impl KsuOrchestrator {
         custom_ksud: Option<&str>,
         host_manager_apk: Option<&Path>,
     ) -> Result<()> {
+        if Self::is_module_loaded(transport).await.unwrap_or(false) {
+            return Ok(());
+        }
+
         let _ = Self::wait_for_framework_ready(transport, 30).await;
 
         let ksud = if let Some(path) = custom_ksud {
@@ -166,6 +170,10 @@ impl KsuOrchestrator {
                 SU_BIN="/data/local/tmp/su"
                 if [ -x /apex/com.android.virt/bin/su ]; then
                     SU_BIN="/apex/com.android.virt/bin/su"
+                elif [ -x /system/bin/su ]; then
+                    SU_BIN="/system/bin/su"
+                elif command -v su >/dev/null 2>&1; then
+                    SU_BIN="su"
                 fi
                 $SU_BIN -c "{} late-load --allow-shell --package-name {}"
             '"#,

@@ -403,8 +403,8 @@ impl ExploitEngine {
 
         // 检查是否已拥有 root 或后台有运行中的注入探测
         let root_status = check_root_status(transport).await?;
-        let mut is_rooted = root_status.is_rooted();
-
+        let already_rooted = root_status.is_rooted();
+        let mut is_rooted = already_rooted;
         if is_rooted {
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
@@ -575,10 +575,12 @@ impl ExploitEngine {
             }
         }
 
-        let _ = event_tx.send(EngineEvent::Log {
-            level: LogLevel::Ok,
-            line: t!("log.uid0_ok").to_string(),
-        });
+        if !already_rooted {
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Ok,
+                line: t!("log.uid0_ok").to_string(),
+            });
+        }
 
         // 步骤: KernelSU Late-Load
         if !options.skip_ksu {
