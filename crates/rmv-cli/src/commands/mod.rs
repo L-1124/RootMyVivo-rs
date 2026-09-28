@@ -2,9 +2,9 @@ use crate::ui::CliUi;
 use anyhow::{Context, Result};
 use colored::*;
 use rmv_core::{
-    check_root_status, CatalogV5, CleanOutcome, EngineOptions, ExploitEngine, GateStatus,
-    HistoryManager, KsuVariant, Persistence, RootStatus, Transport, TransportBuilder,
-    TransportMode,
+    check_root_status, CatalogConfig, CatalogUrlSource, CatalogV5, CleanOutcome, EngineOptions,
+    ExploitEngine, GateStatus, HistoryManager, KsuVariant, Persistence, RootStatus, Transport,
+    TransportBuilder, TransportMode,
 };
 use rust_i18n::t;
 use std::path::PathBuf;
@@ -131,13 +131,55 @@ pub async fn run_check(serial: Option<String>, mode: TransportMode) -> Result<()
     Ok(())
 }
 
+pub async fn run_catalog_show() -> Result<()> {
+    let (url, source) = CatalogConfig::resolve_url(None);
+    let source_str = match source {
+        CatalogUrlSource::CliOverride => t!("cli.catalog_source_cli"),
+        CatalogUrlSource::EnvVar => t!("cli.catalog_source_env"),
+        CatalogUrlSource::ConfigFile => t!("cli.catalog_source_config"),
+        CatalogUrlSource::Default => t!("cli.catalog_source_default"),
+    };
+    println!("{}", t!("cli.catalog_config_title").bold().cyan());
+    println!(
+        "  {} : {}",
+        t!("cli.catalog_current_url"),
+        url.green().bold()
+    );
+    println!("  {} : {}", t!("cli.catalog_current_source"), source_str);
+    Ok(())
+}
+
+pub async fn run_catalog_set(url: &str) -> Result<()> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
+        anyhow::bail!(t!("error.invalid_url", url = url));
+    }
+    CatalogConfig::set_saved_url(trimmed)?;
+    println!(
+        "[ ok ] {}",
+        t!("cli.catalog_url_saved", url = trimmed).green()
+    );
+    Ok(())
+}
+
+pub async fn run_catalog_reset() -> Result<()> {
+    let existed = CatalogConfig::reset_saved_url()?;
+    if existed {
+        println!("[ ok ] {}", t!("cli.catalog_url_reset").green());
+    } else {
+        println!("[info] {}", t!("cli.catalog_url_already_default").dimmed());
+    }
+    Ok(())
+}
+
 pub async fn run_catalog(
     serial: Option<String>,
     catalog_url: Option<String>,
     mode: TransportMode,
 ) -> Result<()> {
     println!("{}", t!("cli.catalog_fetching").bold().cyan());
-    let catalog = CatalogV5::fetch_default_with_url(catalog_url.as_deref())
+    let (resolved_url, _) = CatalogConfig::resolve_url(catalog_url.as_deref());
+    let catalog = CatalogV5::fetch_default_with_url(Some(&resolved_url))
         .await
         .context(t!("error.catalog_fetch_failed", message = "network"))?;
 

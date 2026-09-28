@@ -31,6 +31,9 @@ enum Commands {
     Catalog {
         #[arg(long)]
         catalog_url: Option<String>,
+
+        #[command(subcommand)]
+        action: Option<CatalogAction>,
     },
     Pair {
         addr: String,
@@ -84,6 +87,16 @@ enum Commands {
         #[command(subcommand)]
         action: Option<HistoryAction>,
     },
+}
+
+#[derive(Subcommand)]
+enum CatalogAction {
+    Show,
+    Set {
+        #[arg(value_name = "URL")]
+        url: String,
+    },
+    Reset,
 }
 
 #[derive(Subcommand)]
@@ -141,6 +154,16 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
             sc.about(t!("cli.catalog_about").to_string())
                 .mut_arg("catalog_url", |a| {
                     a.help(t!("cli.arg_catalog_url").to_string())
+                })
+                .mut_subcommand("show", |s| {
+                    s.about(t!("cli.catalog_show_about").to_string())
+                })
+                .mut_subcommand("set", |s| {
+                    s.about(t!("cli.catalog_set_about").to_string())
+                        .mut_arg("url", |a| a.help(t!("cli.arg_catalog_set_url").to_string()))
+                })
+                .mut_subcommand("reset", |s| {
+                    s.about(t!("cli.catalog_reset_about").to_string())
                 })
         })
         .mut_subcommand("run", |sc| {
@@ -219,9 +242,15 @@ async fn main() {
 
     let result = match cli.command {
         Commands::Check => commands::run_check(cli.serial, transport_mode).await,
-        Commands::Catalog { catalog_url } => {
-            commands::run_catalog(cli.serial, catalog_url, transport_mode).await
-        }
+        Commands::Catalog {
+            catalog_url,
+            action,
+        } => match action {
+            Some(CatalogAction::Show) => commands::run_catalog_show().await,
+            Some(CatalogAction::Set { url }) => commands::run_catalog_set(&url).await,
+            Some(CatalogAction::Reset) => commands::run_catalog_reset().await,
+            None => commands::run_catalog(cli.serial, catalog_url, transport_mode).await,
+        },
         Commands::Run {
             payload,
             catalog_url,

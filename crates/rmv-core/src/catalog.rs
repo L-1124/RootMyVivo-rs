@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::path::Path;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::UnboundedSender;
@@ -16,6 +16,74 @@ pub const DEFAULT_CATALOG_URL: &str =
     "https://raw.githubusercontent.com/zenyxx-xd/RootMyVivo-Payloads/main/catalog/devices.json";
 pub const JSDELIVR_CATALOG_URL: &str =
     "https://cdn.jsdelivr.net/gh/zenyxx-xd/RootMyVivo-Payloads@main/catalog/devices.json";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CatalogUrlSource {
+    CliOverride,
+    EnvVar,
+    ConfigFile,
+    Default,
+}
+
+pub struct CatalogConfig;
+
+impl CatalogConfig {
+    pub fn config_path() -> PathBuf {
+        let base = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(base).join(".rmv").join("catalog_url")
+    }
+
+    pub fn get_saved_url() -> Option<String> {
+        let path = Self::config_path();
+        std::fs::read_to_string(path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    pub fn set_saved_url(url: &str) -> Result<()> {
+        let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, url.trim())?;
+        Ok(())
+    }
+
+    pub fn reset_saved_url() -> Result<bool> {
+        let path = Self::config_path();
+        if path.exists() {
+            std::fs::remove_file(path)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn resolve_url(cli_override: Option<&str>) -> (String, CatalogUrlSource) {
+        if let Some(url) = cli_override {
+            let trimmed = url.trim();
+            if !trimmed.is_empty() {
+                return (trimmed.to_string(), CatalogUrlSource::CliOverride);
+            }
+        }
+
+        if let Ok(env_url) = std::env::var("RMV_CATALOG_URL") {
+            let trimmed = env_url.trim();
+            if !trimmed.is_empty() {
+                return (trimmed.to_string(), CatalogUrlSource::EnvVar);
+            }
+        }
+
+        if let Some(saved) = Self::get_saved_url() {
+            return (saved, CatalogUrlSource::ConfigFile);
+        }
+
+        (DEFAULT_CATALOG_URL.to_string(), CatalogUrlSource::Default)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PayloadFile {
@@ -81,10 +149,11 @@ impl CatalogV5 {
     }
 
     pub async fn fetch_with_url(client: &Client, custom_url: Option<&str>) -> Result<Self> {
-        let urls: Vec<&str> = if let Some(url) = custom_url {
-            vec![url, DEFAULT_CATALOG_URL, JSDELIVR_CATALOG_URL]
-        } else {
+        let (resolved_url, source) = CatalogConfig::resolve_url(custom_url);
+        let urls: Vec<&str> = if source == CatalogUrlSource::Default {
             vec![DEFAULT_CATALOG_URL, JSDELIVR_CATALOG_URL]
+        } else {
+            vec![&resolved_url, DEFAULT_CATALOG_URL, JSDELIVR_CATALOG_URL]
         };
         let mut last_err = None;
 
@@ -290,12 +359,26 @@ mod tests {
             "vivo",
             "Linux version 6.6.89-android15-8-g1f71897ac249-abogki467805059-4k #1 SMP",
             "boot-1",
-        ).unwrap();
+        )
+        .unwrap();
 
         let matched = cat.match_payload(&dev);
         assert!(matched.is_some());
         let (d_entry, k_build) = matched.unwrap();
         assert_eq!(d_entry.market_name, "iQOO 13");
         assert_eq!(k_build.file.as_ref().unwrap().name, "g1f71897ac249.so");
+    }
+
+    #[test]
+    fn test_catalog_config_resolve_url_precedence() {
+        let (url, src) = CatalogConfig::resolve_url(Some("https://cli-override.com/devices.json"));
+        assert_eq!(url, "https://cli-override.com/devices.json");
+        assert_eq!(src, CatalogUrlSource::CliOverride);
+
+        if std::env::var("RMV_CATALOG_URL").is_err() && CatalogConfig::get_saved_url().is_none() {
+            let (def_url, def_src) = CatalogConfig::resolve_url(None);
+            assert_eq!(def_url, DEFAULT_CATALOG_URL);
+            assert_eq!(def_src, CatalogUrlSource::Default);
+        }
     }
 }
