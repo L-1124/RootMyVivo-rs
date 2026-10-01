@@ -194,17 +194,22 @@ impl KsuOrchestrator {
 
         let cmd = format!(
             r#"sh -c '
-                SU_BIN="/data/local/tmp/su"
-                if [ -x /apex/com.android.virt/bin/su ]; then
-                    SU_BIN="/apex/com.android.virt/bin/su"
+                [ -e /data/local/tmp/rmv/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf /data/local/tmp/rmv/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null
+                [ -e /data/local/tmp/rmv/su ] && [ ! -e /data/local/tmp/su ] && ln -sf /data/local/tmp/rmv/su /data/local/tmp/su 2>/dev/null
+
+                if [ -x /data/local/tmp/rmv/su ]; then
+                    RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c "{} late-load --allow-shell --package-name {}"
+                elif [ -x /data/local/tmp/su ]; then
+                    /data/local/tmp/su -c "{} late-load --allow-shell --package-name {}"
+                elif [ -x /apex/com.android.virt/bin/su ]; then
+                    /apex/com.android.virt/bin/su -c "{} late-load --allow-shell --package-name {}"
                 elif [ -x /system/bin/su ]; then
-                    SU_BIN="/system/bin/su"
-                elif command -v su >/dev/null 2>&1; then
-                    SU_BIN="su"
+                    /system/bin/su -c "{} late-load --allow-shell --package-name {}"
+                else
+                    su -c "{} late-load --allow-shell --package-name {}"
                 fi
-                $SU_BIN -c "{} late-load --allow-shell --package-name {}"
             '"#,
-            ksud, pkg
+            ksud, pkg, ksud, pkg, ksud, pkg, ksud, pkg, ksud, pkg
         );
         let (code, out) = transport.exec(&cmd).await?;
         if code != 0 && !out.contains("already loaded") {
@@ -228,9 +233,16 @@ impl KsuOrchestrator {
         }
 
         if !loaded {
-            return Err(RmvError::KsuFailed(
-                t!("error.ksu_module_not_detected").to_string(),
-            ));
+            let out_info = if out.trim().is_empty() {
+                "none".to_string()
+            } else {
+                out.trim().to_string()
+            };
+            return Err(RmvError::KsuFailed(format!(
+                "{} (late-load output: {})",
+                t!("error.ksu_module_not_detected"),
+                out_info
+            )));
         }
         Ok(())
     }
