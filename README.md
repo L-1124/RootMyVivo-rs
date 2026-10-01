@@ -2,15 +2,14 @@
 
 [![Rust Edition](https://img.shields.io/badge/edition-2021-orange.svg)](https://doc.rust-lang.org/edition-guide/rust-2021/)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](Cargo.toml)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20WebAssembly-lightgrey.svg)](https://github.com/zenyxx-xd/RootMyVivo)
-[![Crates](https://img.shields.io/badge/crates-rmv--core%20%7C%20rmv--cli%20%7C%20rmv--wasm-informational.svg)](Cargo.toml)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/zenyxx-xd/RootMyVivo)
+[![Crates](https://img.shields.io/badge/crates-rmv--core%20%7C%20rmv--cli-informational.svg)](Cargo.toml)
 
 A cross-platform, pure-Rust toolchain providing **unlock-free temporary root** and **KernelSU / SukiSU LKM late-loading** for bootloader-locked vivo and iQOO devices exploiting **CVE-2026-43499**.
 
-`RootMyVivo-rs` completely eliminates external runtime dependencies on Google's `adb.exe` binary:
-- **Desktop (Windows / Linux / macOS)**: Direct hardware communication via pure-Rust USB (`nusb`) and Android 11+ Wireless Debugging (`rustls` TLS 1.3 + mDNS + SPAKE2 pairing).
-- **Web (Browser / WebAssembly)**: Client-side WebUSB via `rmv-wasm` compiling to `wasm32-unknown-unknown`.
-- **Legacy Fallback**: Automatic failover to `AdbCliTransport` when an ADB server daemon is already running.
+`RootMyVivo-rs` connects to target devices via pure-Rust ADB protocol:
+- **Primary Transport**: Pure-Rust Smartsocket client (`adb_client`) connecting to local ADB server daemon with automatic background server lifecycle management.
+- **CLI Fallback**: `AdbCliTransport` for direct CLI subprocess failover.
 
 ---
 
@@ -19,25 +18,21 @@ A cross-platform, pure-Rust toolchain providing **unlock-free temporary root** a
 ```mermaid
 graph TD
     CLI[rmv-cli binary: rmv] --> Engine[rmv-core: ExploitEngine]
-    WASM[rmv-wasm: RmvWebBridge] --> Engine
 
     Engine --> Trait[Transport Trait]
 
     subgraph Transport Implementations
-        Trait --> Usb[AdbUsbTransport: nusb + webadb-rs]
-        Trait --> Wifi[AdbWifiTransport: mTLS + mDNS + SPAKE2]
+        Trait --> Client[AdbClientTransport: adb_client smartsocket]
         Trait --> Cli[AdbCliTransport: adb subprocess fallback]
-        Trait --> WebUsb[AdbWebUsbTransport: WebUSB in browser]
     end
 
     subgraph Core Pipeline
         Engine --> Stage1[1. Device Gate: DeviceInfo::parse + CVE-2026-43499 check]
         Stage1 --> Stage2[2. Catalog Match: CatalogV5 fingerprint match + SHA-256 verify]
-        Stage2 --> Stage3[3. Payload Verify: ELF inspection + target device check]
-        Stage3 --> Stage4[4. Injection: push_bytes to /data/local/tmp/rmv + LD_PRELOAD]
-        Stage4 --> Stage5[5. Polling Loop: live.log + DONE sentinel + 4-path su cascade]
-        Stage5 --> Stage6[6. KSU Late-Load: KsuOrchestrator ksud + su wrapper check]
-        Stage6 --> Stage7[7. Cleanup & History: Persistence::clean_traces + HistoryManager]
+        Stage2 --> Stage3[3. Injection: push_bytes to /data/local/tmp/rmv + LD_PRELOAD]
+        Stage3 --> Stage4[4. Polling Loop: live.log + DONE sentinel + su -c id until uid=0]
+        Stage4 --> Stage5[5. KSU Late-Load: KsuOrchestrator ksud dynamic module activation]
+        Stage5 --> Stage6[6. Cleanup & History: Persistence::clean_traces + HistoryManager]
     end
 ```
 
@@ -60,9 +55,8 @@ graph TD
 
 | Crate | Target | Description |
 |---|---|---|
-| `crates/rmv-core` | Desktop & WASM | Core engine, exploit pipeline, transports (`usb`, `wifi`, `cli`), catalog resolution, and KernelSU orchestration. |
+| `crates/rmv-core` | Desktop | Core engine, exploit pipeline, transports (`usb`, `wifi`, `cli`), catalog resolution, and KernelSU orchestration. |
 | `crates/rmv-cli` | Desktop | Terminal binary (`rmv`) providing interactive CLI dispatch, live progress bars, and localized commands. |
-| `crates/rmv-wasm` | `wasm32-unknown-unknown` | WebAssembly bridge exposing WebUSB adb channels for browser-based deployment. |
 
 ---
 
@@ -71,10 +65,6 @@ graph TD
 ### Prerequisites
 
 - [Rust Toolchain](https://rustup.rs/) (1.80+ recommended, 2021 edition)
-- (Optional, for WebAssembly) `wasm32-unknown-unknown` target:
-  ```bash
-  rustup target add wasm32-unknown-unknown
-  ```
 
 ### Build CLI Binary
 
@@ -94,9 +84,6 @@ The compiled binary will be located at `target/release/rmv` (or `target/release/
 # Run all workspace unit tests (19 unit tests across 5 suites)
 cargo test --workspace
 
-# Verify WebAssembly target cleanly compiles without desktop network dependencies
-cargo check -p rmv-wasm --target wasm32-unknown-unknown
-```
 
 ---
 
