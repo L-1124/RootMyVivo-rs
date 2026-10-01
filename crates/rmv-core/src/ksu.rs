@@ -205,58 +205,7 @@ impl KsuOrchestrator {
                 t!("error.ksu_module_not_detected").to_string(),
             ));
         }
-
-        Self::apply_su_wrapper_fix(transport).await?;
-
         Ok(())
-    }
-
-    pub async fn apply_su_wrapper_fix<T: Transport>(transport: &T) -> Result<Vec<String>> {
-        let (check_code, check_out) = transport.exec("/system/bin/su -c id 2>/dev/null").await?;
-        if check_code != 0 || !check_out.contains("uid=0") {
-            return Ok(Vec::new());
-        }
-
-        let script = r#"
-            WRAPPER_B64="IyEvc3lzdGVtL2Jpbi9zaApleGVjIC9zeXN0ZW0vYmluL3N1ICIkQCIK"
-
-            fix_if_needed() {
-                TARGET="$1"
-                LABEL="$2"
-                DIR=$(dirname "$TARGET")
-                [ ! -d "$DIR" ] && return 0
-
-                if [ -f "$TARGET" ]; then
-                    if grep -q "exec /system/bin/su" "$TARGET" 2>/dev/null && "$TARGET" -c id >/dev/null 2>&1; then
-                        return 0
-                    fi
-                fi
-
-                echo "$WRAPPER_B64" | base64 -d > "$TARGET" 2>/dev/null || return 0
-                chmod 755 "$TARGET"
-                chown root:root "$TARGET"
-                [ -n "$LABEL" ] && chcon "$LABEL" "$TARGET" 2>/dev/null || true
-
-                if "$TARGET" -c id >/dev/null 2>&1; then
-                    echo "REPAIRED:$TARGET"
-                fi
-            }
-
-            fix_if_needed "/apex/com.android.virt/bin/su" "u:object_r:system_file:s0"
-            fix_if_needed "/data/local/tmp/su" "u:object_r:shell_data_file:s0"
-        "#;
-
-        let fix_cmd = format!("/system/bin/su -c '{}'", script.replace('\'', "'\\''"));
-        let (_, out) = transport.exec(&fix_cmd).await?;
-
-        let mut repaired = Vec::new();
-        for line in out.lines() {
-            if let Some(path) = line.strip_prefix("REPAIRED:") {
-                repaired.push(path.trim().to_string());
-            }
-        }
-
-        Ok(repaired)
     }
 }
 #[cfg(test)]

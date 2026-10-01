@@ -75,8 +75,7 @@ impl RootStatus {
 pub const ROOT_PROBE_CMD: &str = "\
     echo __RMV_KSU__; cat /proc/modules 2>/dev/null | grep -i kernelsu; \
     echo __RMV_SYS_SU__; /system/bin/su -c id 2>/dev/null; \
-    echo __RMV_TMP_SU__; /data/local/tmp/su -c id 2>/dev/null; \
-    echo __RMV_VIRT_SU__; /apex/com.android.virt/bin/su -c id 2>/dev/null; \
+    echo __RMV_TMP_SU__; if [ -x /data/local/tmp/rmv/su ]; then /data/local/tmp/rmv/su -c id 2>/dev/null && echo RMV_PATH_RMV; else /data/local/tmp/su -c id 2>/dev/null && echo RMV_PATH_TMP; fi; \
     echo __RMV_BARE_SU__; su -c id 2>/dev/null; \
     echo __RMV_MAPS__; grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1; \
     echo __RMV_DONE__; [ -f /data/local/tmp/rmv/DONE ] && echo RMV_DONE; \
@@ -105,20 +104,10 @@ pub fn parse_root_probe(probe_output: &str) -> RootStatus {
         .split("__RMV_TMP_SU__")
         .nth(1)
         .unwrap_or("")
-        .split("__RMV_VIRT_SU__")
-        .next()
-        .unwrap_or("")
-        .trim();
-
-    let virt_su_part = probe_output
-        .split("__RMV_VIRT_SU__")
-        .nth(1)
-        .unwrap_or("")
         .split("__RMV_BARE_SU__")
         .next()
         .unwrap_or("")
         .trim();
-
     let bare_su_part = probe_output
         .split("__RMV_BARE_SU__")
         .nth(1)
@@ -149,7 +138,6 @@ pub fn parse_root_probe(probe_output: &str) -> RootStatus {
     let has_ksu_module = ksu_part.to_lowercase().contains("kernelsu");
     let sys_su_ok = sys_su_part.contains("uid=0");
     let tmp_su_ok = tmp_su_part.contains("uid=0");
-    let virt_su_ok = virt_su_part.contains("uid=0");
     let bare_su_ok = bare_su_part.contains("uid=0");
 
     let has_preload_mapped = maps_part.contains("/proc/");
@@ -165,13 +153,13 @@ pub fn parse_root_probe(probe_output: &str) -> RootStatus {
             su_path: "su".to_string(),
         }
     } else if tmp_su_ok {
+        let su_path = if tmp_su_part.contains("RMV_PATH_RMV") {
+            "/data/local/tmp/rmv/su".to_string()
+        } else {
+            "/data/local/tmp/su".to_string()
+        };
         RootStatus::TempRoot {
-            su_path: "/data/local/tmp/su".to_string(),
-            exploit_running,
-        }
-    } else if virt_su_ok {
-        RootStatus::TempRoot {
-            su_path: "/apex/com.android.virt/bin/su".to_string(),
+            su_path,
             exploit_running,
         }
     } else if bare_su_ok {
@@ -359,7 +347,6 @@ mod tests {
 __RMV_KSU__\n\
 __RMV_SYS_SU__\n/system/bin/sh: /system/bin/su: inaccessible or not found\n\
 __RMV_TMP_SU__\n/system/bin/sh: /data/local/tmp/su: not found\n\
-__RMV_VIRT_SU__\n/system/bin/sh: /apex/com.android.virt/bin/su: not found\n\
 __RMV_BARE_SU__\n/system/bin/sh: su: not found\n\
 __RMV_MAPS__\n\
 __RMV_DONE__\n\
@@ -383,7 +370,6 @@ __RMV_END__\n";
 __RMV_KSU__\nkernelsu 12345 0 - Live 0xffffff8000000000\n\
 __RMV_SYS_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0\n\
 __RMV_TMP_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0\n\
-__RMV_VIRT_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0\n\
 __RMV_BARE_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:ksu:s0\n\
 __RMV_MAPS__\n\
 __RMV_DONE__\nRMV_DONE\n\
@@ -405,8 +391,7 @@ __RMV_END__\n";
         let raw = "\
 __RMV_KSU__\n\
 __RMV_SYS_SU__\n\
-__RMV_TMP_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:shell:s0\n\
-__RMV_VIRT_SU__\nsu: connect daemon: Permission denied\n\
+__RMV_TMP_SU__\nuid=0(root) gid=0(root) groups=0(root) context=u:r:shell:s0\nRMV_PATH_RMV\n\
 __RMV_BARE_SU__\nsu: connect daemon: Permission denied\n\
 __RMV_MAPS__\n/proc/18422/maps\n\
 __RMV_DONE__\n\
@@ -415,14 +400,14 @@ __RMV_END__\n";
         assert_eq!(
             status,
             RootStatus::TempRoot {
-                su_path: "/data/local/tmp/su".to_string(),
+                su_path: "/data/local/tmp/rmv/su".to_string(),
                 exploit_running: true,
             }
         );
         assert!(status.is_rooted());
         assert!(!status.is_kernelsu());
         assert!(status.is_exploit_running());
-        assert_eq!(status.su_path(), Some("/data/local/tmp/su"));
+        assert_eq!(status.su_path(), Some("/data/local/tmp/rmv/su"));
     }
 
     #[test]
@@ -431,7 +416,6 @@ __RMV_END__\n";
 __RMV_KSU__\n\
 __RMV_SYS_SU__\n\
 __RMV_TMP_SU__\n\
-__RMV_VIRT_SU__\n\
 __RMV_BARE_SU__\n\
 __RMV_MAPS__\n/proc/19321/maps\n\
 __RMV_DONE__\n\

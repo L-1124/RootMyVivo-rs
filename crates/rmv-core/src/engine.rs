@@ -11,7 +11,6 @@ use crate::error::{Result, RmvError};
 use crate::event::{EngineEvent, EngineStatus, LogLevel, Phase};
 use crate::history::{HistoryManager, RunRecord};
 use crate::ksu::{KsuOrchestrator, KsuVariant};
-use crate::payload::{find_local_payload, verify_payload_file};
 use crate::persistence::Persistence;
 use crate::transport::Transport;
 
@@ -194,8 +193,7 @@ impl ExploitEngine {
         }
 
         // 步骤 2: 载荷获取 (自定义文件 或 在线编目匹配)
-        let mut market_hint: Option<String> = None;
-        let mut payload_local_path = if let Some(custom) = &options.custom_payload {
+        let payload_local_path = if let Some(custom) = &options.custom_payload {
             let _ = event_tx.send(EngineEvent::Step {
                 phase: Phase::Catalog,
                 index: 2,
@@ -225,14 +223,13 @@ impl ExploitEngine {
             let catalog =
                 CatalogV5::fetch_with_url(&self.client, options.custom_catalog_url.as_deref())
                     .await?;
-            let (device_entry, kernel_build) =
+            let (_device_entry, kernel_build) =
                 catalog
                     .match_payload(&device)
                     .ok_or_else(|| RmvError::PayloadNotFound {
                         device: format!("{}/{}", device.model, device.device),
                         kernel: device.kernel_full.clone(),
                     })?;
-            market_hint = Some(device_entry.market_name.clone());
 
             // Block execution if the catalog marks this build as patched
             if kernel_build.status.eq_ignore_ascii_case("patched") {
@@ -283,76 +280,6 @@ impl ExploitEngine {
             target_file
         };
 
-        // 载荷身份闸门：拒绝其它机型或其它内核构建的载荷
-        let mut gate = verify_payload_file(&payload_local_path, &device);
-        let is_gate_matched = matches!(&gate, Ok(identity) if identity.has_device_fingerprint || (device.abogki_fingerprint.is_none() && identity.foreign_labels(&device).is_empty()));
-        if !is_gate_matched && !options.payload_dirs.is_empty() {
-            if let Some(local) =
-                find_local_payload(&options.payload_dirs, &device, market_hint.as_deref())
-            {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Warn,
-                    line: t!("log.fallback_local", path = local.display().to_string()).to_string(),
-                });
-                payload_local_path = local;
-                gate = verify_payload_file(&payload_local_path, &device);
-            }
-        }
-
-        let verified = match &gate {
-            Ok(identity) => {
-                identity.has_device_fingerprint
-                    || (device.abogki_fingerprint.is_none()
-                        && identity.foreign_labels(&device).is_empty())
-            }
-            Err(_) => false,
-        };
-
-        if verified {
-            let fp_display = device
-                .abogki_fingerprint
-                .as_deref()
-                .unwrap_or(&device.device);
-            let _ = event_tx.send(EngineEvent::Log {
-                level: LogLevel::Ok,
-                line: t!("log.gate_verified", fingerprint = fp_display).to_string(),
-            });
-        } else {
-            match gate {
-                Ok(identity) => {
-                    if !options.force_payload {
-                        let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
-                        return Err(RmvError::PayloadDeviceMismatch {
-                            expected: device
-                                .abogki_fingerprint
-                                .clone()
-                                .unwrap_or_else(|| device.device.clone()),
-                            found: if identity.labels.is_empty() {
-                                "unlabeled".to_string()
-                            } else {
-                                identity.labels.join(", ")
-                            },
-                            labels: identity.labels.join(", "),
-                        });
-                    }
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Warn,
-                        line: t!("log.force_payload_warn").to_string(),
-                    });
-                }
-                Err(e) => {
-                    if !options.force_payload {
-                        let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
-                        return Err(e);
-                    }
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Warn,
-                        line: t!("log.force_payload_warn").to_string(),
-                    });
-                }
-            }
-        }
-
         if options.dry_run {
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
@@ -391,8 +318,8 @@ impl ExploitEngine {
         let remote_so = "/data/local/tmp/rmv/preload.so";
         let _ = transport
             .exec(&format!(
-                "mkdir -p {} && rm -f {} /data/local/tmp/rmv/DONE /data/local/tmp/rmv/live.log",
-                remote_dir, remote_so
+                "mkdir -p {} {}/rmv && rm -f {} /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE /data/local/tmp/rmv/live.log",
+                remote_dir, remote_dir, remote_so
             ))
             .await?;
         transport.push(&payload_local_path, remote_so).await?;
@@ -428,8 +355,8 @@ impl ExploitEngine {
                 });
             } else {
                 let run_cmd = format!(
-                    "cd {} && (RMV_ATTEMPTS='{}' RMV_RETRY_DELAY='{}' LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 &)",
-                    remote_dir, options.attempts, options.retry_delay, remote_so
+                    "cd {} && (RMV_HOME='{}' RMV_ATTEMPTS='{}' RMV_RETRY_DELAY='{}' LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 &)",
+                    remote_dir, remote_dir, options.attempts, options.retry_delay, remote_so
                 );
                 let _ = transport.exec(&run_cmd).await?;
             }
@@ -451,9 +378,9 @@ impl ExploitEngine {
                 let (_, probe) = transport
                     .exec(
                         "tail -n 15 /data/local/tmp/rmv/live.log 2>/dev/null; \
-                         echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE 2>/dev/null; \
+                         echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE 2>/dev/null | head -n 1; \
                          echo __RMV_ALIVE__; grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1; \
-                         echo __RMV_SU__; /system/bin/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null || /apex/com.android.virt/bin/su -c id 2>/dev/null || su -c id 2>/dev/null; \
+                         echo __RMV_SU__; /system/bin/su -c id 2>/dev/null || /data/local/tmp/rmv/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null; \
                          echo __RMV_BOOTID__; cat /proc/sys/kernel/random/boot_id 2>/dev/null; \
                          echo __RMV_END__",
                     )
@@ -626,14 +553,6 @@ impl ExploitEngine {
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Ok,
                     line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),
-                });
-            }
-            // 自动检测并包装被抢占的 su 路径
-            let repaired = KsuOrchestrator::apply_su_wrapper_fix(transport).await?;
-            for path in repaired {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Ok,
-                    line: t!("log.su_wrapper_applied", path = path).to_string(),
                 });
             }
         }

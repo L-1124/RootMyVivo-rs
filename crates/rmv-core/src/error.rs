@@ -12,11 +12,6 @@ pub enum RmvError {
         reason: String,
     },
     CatalogFetchFailed(String),
-    PayloadDeviceMismatch {
-        expected: String,
-        found: String,
-        labels: String,
-    },
     PayloadNotFound {
         device: String,
         kernel: String,
@@ -35,7 +30,6 @@ pub enum RmvError {
     KsuFailed(String),
     Cancelled,
     Io(std::io::Error),
-    #[cfg(not(target_arch = "wasm32"))]
     Http(reqwest::Error),
     Json(serde_json::Error),
 }
@@ -69,22 +63,6 @@ impl fmt::Display for RmvError {
                     f,
                     "{}",
                     rust_i18n::t!("error.catalog_fetch_failed", message = s)
-                )
-            }
-            Self::PayloadDeviceMismatch {
-                expected,
-                found,
-                labels,
-            } => {
-                write!(
-                    f,
-                    "{}",
-                    rust_i18n::t!(
-                        "error.payload_device_mismatch",
-                        expected = expected,
-                        found = found,
-                        labels = labels
-                    )
                 )
             }
             Self::PayloadNotFound { device, kernel } => {
@@ -121,7 +99,6 @@ impl fmt::Display for RmvError {
                 let msg = e.to_string();
                 write!(f, "{}", rust_i18n::t!("error.io", message = msg))
             }
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Http(e) => {
                 let msg = e.to_string();
                 write!(f, "{}", rust_i18n::t!("error.http", message = msg))
@@ -138,7 +115,6 @@ impl std::error::Error for RmvError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Http(e) => Some(e),
             Self::Json(e) => Some(e),
             _ => None,
@@ -152,7 +128,6 @@ impl From<std::io::Error> for RmvError {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl From<reqwest::Error> for RmvError {
     fn from(e: reqwest::Error) -> Self {
         Self::Http(e)
