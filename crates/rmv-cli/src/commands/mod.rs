@@ -243,6 +243,9 @@ pub async fn run_exploit(
     payload_dirs: Vec<PathBuf>,
     dry_run: bool,
     manager_apk: Option<PathBuf>,
+    manager_version: Option<String>,
+    mirror: Option<String>,
+    no_install_manager: bool,
     timeout_secs: u64,
     mode: TransportMode,
 ) -> Result<()> {
@@ -262,6 +265,9 @@ pub async fn run_exploit(
         payload_dirs,
         dry_run,
         manager_apk,
+        github_mirror: mirror,
+        manager_version,
+        install_manager: !no_install_manager,
         timeout_secs,
     };
 
@@ -539,5 +545,156 @@ pub async fn run_history_clear() -> Result<()> {
             .green()
             .bold()
     );
+    Ok(())
+}
+
+pub async fn run_manager_download(
+    ksu: String,
+    version: Option<String>,
+    mirror: Option<String>,
+) -> Result<()> {
+    let variant = KsuVariant::from_id(&ksu);
+    println!(
+        "{} {}",
+        "[ .. ]".cyan(),
+        t!("log.manager_auto_download", name = variant.display_name())
+    );
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let mut ui = CliUi::new();
+    let ui_handle = tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            ui.handle_event(event);
+        }
+    });
+
+    let path = rmv_core::ManagerDownloader::download_manager_default(
+        variant,
+        version.as_deref(),
+        None,
+        mirror.as_deref(),
+        Some(&event_tx),
+    )
+    .await?;
+
+    drop(event_tx);
+    let _ = ui_handle.await;
+    println!(
+        "{} {} -> {}",
+        "[ ok ]".green().bold(),
+        variant.display_name(),
+        path.display()
+    );
+    Ok(())
+}
+
+pub async fn run_manager_list() -> Result<()> {
+    let list = rmv_core::ManagerDownloader::list_cached_managers(None);
+    println!("\n{}", t!("cli.manager_list_about").cyan().bold());
+    if list.is_empty() {
+        println!("  {}", t!("cli.manager_empty").dimmed());
+        return Ok(());
+    }
+    for item in list {
+        let name = item.variant.map(|v| v.display_name()).unwrap_or("Unknown");
+        println!(
+            "  - {} : {} ({:.1} MB)",
+            name.green().bold(),
+            item.file_name,
+            item.size as f32 / 1024.0 / 1024.0
+        );
+        println!("    {}", item.path.display().to_string().dimmed());
+    }
+    println!();
+    Ok(())
+}
+
+pub async fn run_manager_install(
+    serial: Option<String>,
+    ksu: String,
+    mode: TransportMode,
+) -> Result<()> {
+    let variant = KsuVariant::from_id(&ksu);
+    let list = rmv_core::ManagerDownloader::list_cached_managers(None);
+    let found = list.into_iter().find(|m| m.variant == Some(variant));
+
+    let apk_path = match found {
+        Some(item) => item.path,
+        None => {
+            println!(
+                "{} {}",
+                "[ .. ]".cyan(),
+                t!("log.manager_auto_download", name = variant.display_name())
+            );
+            rmv_core::ManagerDownloader::download_manager_default(variant, None, None, None, None)
+                .await?
+        }
+    };
+
+    println!(
+        "{} {}",
+        "[ .. ]".cyan(),
+        t!("log.manager_installing", name = variant.display_name())
+    );
+    let transport = TransportBuilder::resolve(serial, mode).await?;
+    let remote_path = "/data/local/tmp/rmv/manager_install.apk";
+    transport.push(&apk_path, remote_path).await?;
+    let (code, out) = transport
+        .exec(&format!("pm install -r -d {}", remote_path))
+        .await?;
+    let _ = transport.exec(&format!("rm -f {}", remote_path)).await;
+
+    if code == 0 && (out.contains("Success") || out.is_empty()) {
+        println!(
+            "{} {}",
+            "[ ok ]".green().bold(),
+            t!("log.manager_install_ok", name = variant.display_name()).green()
+        );
+        Ok(())
+    } else {
+        anyhow::bail!(t!(
+            "error.manager_install_failed",
+            name = variant.display_name(),
+            message = out.trim()
+        ))
+    }
+}
+
+pub async fn run_config_set_mirror(mirror: &str) -> Result<()> {
+    rmv_core::MirrorConfig::set_saved_mirror(mirror)?;
+    println!(
+        "{} {}",
+        "[ ok ]".green().bold(),
+        t!("cli.config_mirror_saved", mirror = mirror).green()
+    );
+    Ok(())
+}
+
+pub async fn run_config_get_mirror() -> Result<()> {
+    println!("\n{}", t!("cli.config_mirror_title").cyan().bold());
+    let saved = rmv_core::MirrorConfig::get_saved_mirror();
+    let current = saved.as_deref().unwrap_or("Default (direct + mirrors)");
+    println!(
+        "  {} : {}",
+        t!("cli.config_mirror_current"),
+        current.green().bold()
+    );
+    println!();
+    Ok(())
+}
+
+pub async fn run_config_reset_mirror() -> Result<()> {
+    if rmv_core::MirrorConfig::reset_saved_mirror()? {
+        println!(
+            "{} {}",
+            "[ ok ]".green().bold(),
+            t!("cli.config_mirror_reset").green()
+        );
+    } else {
+        println!(
+            "{} {}",
+            "[info]".cyan(),
+            t!("cli.config_mirror_already_default")
+        );
+    }
     Ok(())
 }

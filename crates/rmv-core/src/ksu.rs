@@ -42,6 +42,33 @@ impl KsuVariant {
             _ => Self::SukiSuUltra,
         }
     }
+
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::KernelSU => "kernelsu",
+            Self::KernelSuNext => "ksunext",
+            Self::SukiSuUltra => "sukisu",
+            Self::ReSukiSu => "resukisu",
+        }
+    }
+
+    pub fn github_repo(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::KernelSU => ("tiann", "KernelSU"),
+            Self::KernelSuNext => ("KernelSU-Next", "KernelSU-Next"),
+            Self::SukiSuUltra => ("SukiSU-Ultra", "SukiSU-Ultra"),
+            Self::ReSukiSu => ("ReSukiSU", "ReSukiSU"),
+        }
+    }
+
+    pub fn all_variants() -> &'static [Self] {
+        &[
+            Self::SukiSuUltra,
+            Self::KernelSuNext,
+            Self::KernelSU,
+            Self::ReSukiSu,
+        ]
+    }
 }
 
 pub struct KsuOrchestrator;

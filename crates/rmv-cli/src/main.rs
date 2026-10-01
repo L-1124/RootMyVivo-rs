@@ -80,12 +80,30 @@ enum Commands {
         #[arg(long = "manager-apk", value_name = "APK_PATH")]
         manager_apk: Option<PathBuf>,
 
+        #[arg(long = "manager-version", value_name = "TAG")]
+        manager_version: Option<String>,
+
+        #[arg(long = "mirror", value_name = "URL_PREFIX")]
+        mirror: Option<String>,
+
+        #[arg(long = "no-install-manager", default_value_t = false)]
+        no_install_manager: bool,
+
         #[arg(long, default_value_t = 900)]
         timeout: u64,
     },
 
     Clean,
 
+    Manager {
+        #[command(subcommand)]
+        action: ManagerAction,
+    },
+
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
     History {
         #[command(subcommand)]
         action: Option<HistoryAction>,
@@ -102,6 +120,32 @@ enum CatalogAction {
     Reset,
 }
 
+#[derive(Subcommand)]
+enum ManagerAction {
+    Download {
+        #[arg(short, long, default_value = "sukisu")]
+        ksu: String,
+        #[arg(long = "version")]
+        version: Option<String>,
+        #[arg(long)]
+        mirror: Option<String>,
+    },
+    List,
+    Install {
+        #[arg(short, long, default_value = "sukisu")]
+        ksu: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    SetMirror {
+        #[arg(value_name = "URL")]
+        mirror: String,
+    },
+    GetMirror,
+    ResetMirror,
+}
 #[derive(Subcommand)]
 enum HistoryAction {
     List {
@@ -195,7 +239,44 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                 .mut_arg("manager_apk", |a| {
                     a.help(t!("cli.arg_manager_apk").to_string())
                 })
+                .mut_arg("manager_version", |a| {
+                    a.help(t!("cli.arg_manager_version").to_string())
+                })
+                .mut_arg("mirror", |a| a.help(t!("cli.arg_mirror").to_string()))
+                .mut_arg("no_install_manager", |a| {
+                    a.help(t!("cli.arg_no_install_manager").to_string())
+                })
                 .mut_arg("timeout", |a| a.help(t!("cli.arg_timeout").to_string()))
+        })
+        .mut_subcommand("manager", |sc| {
+            sc.about(t!("cli.manager_about").to_string())
+                .mut_subcommand("download", |s| {
+                    s.about(t!("cli.manager_download_about").to_string())
+                        .mut_arg("ksu", |a| a.help(t!("cli.arg_ksu").to_string()))
+                        .mut_arg("version", |a| {
+                            a.help(t!("cli.arg_manager_version").to_string())
+                        })
+                        .mut_arg("mirror", |a| a.help(t!("cli.arg_mirror").to_string()))
+                })
+                .mut_subcommand("list", |s| {
+                    s.about(t!("cli.manager_list_about").to_string())
+                })
+                .mut_subcommand("install", |s| {
+                    s.about(t!("cli.manager_install_about").to_string())
+                        .mut_arg("ksu", |a| a.help(t!("cli.arg_ksu").to_string()))
+                })
+        })
+        .mut_subcommand("config", |sc| {
+            sc.about(t!("cli.config_about").to_string())
+                .mut_subcommand("set-mirror", |s| {
+                    s.about(t!("cli.config_set_mirror_about").to_string())
+                })
+                .mut_subcommand("get-mirror", |s| {
+                    s.about(t!("cli.config_get_mirror_about").to_string())
+                })
+                .mut_subcommand("reset-mirror", |s| {
+                    s.about(t!("cli.config_reset_mirror_about").to_string())
+                })
         })
         .mut_subcommand("clean", |sc| sc.about(t!("cli.clean_about").to_string()))
         .mut_subcommand("history", |sc| {
@@ -268,6 +349,9 @@ async fn main() {
             payload_dirs,
             dry_run,
             manager_apk,
+            manager_version,
+            mirror,
+            no_install_manager,
             timeout,
         } => {
             commands::run_exploit(
@@ -284,11 +368,30 @@ async fn main() {
                 payload_dirs,
                 dry_run,
                 manager_apk,
+                manager_version,
+                mirror,
+                no_install_manager,
                 timeout,
                 transport_mode,
             )
             .await
         }
+        Commands::Manager { action } => match action {
+            ManagerAction::Download {
+                ksu,
+                version,
+                mirror,
+            } => commands::run_manager_download(ksu, version, mirror).await,
+            ManagerAction::List => commands::run_manager_list().await,
+            ManagerAction::Install { ksu } => {
+                commands::run_manager_install(cli.serial, ksu, transport_mode).await
+            }
+        },
+        Commands::Config { action } => match action {
+            ConfigAction::SetMirror { mirror } => commands::run_config_set_mirror(&mirror).await,
+            ConfigAction::GetMirror => commands::run_config_get_mirror().await,
+            ConfigAction::ResetMirror => commands::run_config_reset_mirror().await,
+        },
         Commands::Clean => commands::run_clean(cli.serial, transport_mode).await,
         Commands::Pair { list, addr, code } => commands::run_pair(list, addr, code).await,
         Commands::History { action } => match action.unwrap_or(HistoryAction::List { limit: 15 }) {

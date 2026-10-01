@@ -11,6 +11,7 @@ use crate::error::{Result, RmvError};
 use crate::event::{EngineEvent, EngineStatus, LogLevel, Phase};
 use crate::history::{HistoryManager, RunRecord};
 use crate::ksu::{KsuOrchestrator, KsuVariant};
+use crate::manager::ManagerDownloader;
 use crate::persistence::Persistence;
 use crate::transport::Transport;
 
@@ -31,6 +32,12 @@ pub struct EngineOptions {
     pub dry_run: bool,
     /// PC 本地提供的 KernelSU/SukiSU 管理器 APK 路径（用于免预装就地提取 ksud）。
     pub manager_apk: Option<PathBuf>,
+    /// GitHub Release 加速镜像前缀（如 https://ghproxy.net/ 或 direct）
+    pub github_mirror: Option<String>,
+    /// 管理器版本 Tag（None 表示默认最新发布版）
+    pub manager_version: Option<String>,
+    /// 提权成功后是否自动静默安装管理器 APK（默认为 true）
+    pub install_manager: bool,
     /// 提权等待窗口（秒）。CFI 探测最多 24 次且带随机延迟，窗口需覆盖整个探测期。
     pub timeout_secs: u64,
 }
@@ -50,6 +57,9 @@ impl Default for EngineOptions {
             payload_dirs: Vec::new(),
             dry_run: false,
             manager_apk: None,
+            github_mirror: None,
+            manager_version: None,
+            install_manager: true,
             timeout_secs: 900,
         }
     }
@@ -548,12 +558,108 @@ impl ExploitEngine {
                         .to_string(),
                 });
 
-                let host_apk = options.manager_apk.as_deref();
-                KsuOrchestrator::late_load(transport, options.ksu_variant, None, host_apk).await?;
+                let mut host_apk = options.manager_apk.clone();
+                if host_apk.is_none() {
+                    let has_ksud = transport
+                        .exec("test -x /data/local/tmp/rmv/ksud")
+                        .await
+                        .map(|(c, _)| c == 0)
+                        .unwrap_or(false);
+                    let has_installed_app = if !has_ksud {
+                        let (code, out) = transport
+                            .exec(&format!("pm path {}", options.ksu_variant.package_name()))
+                            .await
+                            .unwrap_or((1, String::new()));
+                        code == 0 && out.contains("package:")
+                    } else {
+                        true
+                    };
+
+                    if !has_installed_app {
+                        let _ = event_tx.send(EngineEvent::Log {
+                            level: LogLevel::Info,
+                            line: t!(
+                                "log.manager_auto_download",
+                                name = options.ksu_variant.display_name()
+                            )
+                            .to_string(),
+                        });
+                        let downloaded = ManagerDownloader::download_manager(
+                            &self.client,
+                            options.ksu_variant,
+                            options.manager_version.as_deref(),
+                            None,
+                            options.github_mirror.as_deref(),
+                            Some(event_tx),
+                        )
+                        .await?;
+                        host_apk = Some(downloaded);
+                    }
+                }
+
+                KsuOrchestrator::late_load(
+                    transport,
+                    options.ksu_variant,
+                    None,
+                    host_apk.as_deref(),
+                )
+                .await?;
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Ok,
                     line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),
                 });
+
+                if options.install_manager {
+                    if let Some(apk_path) = host_apk.as_ref() {
+                        let pkg = options.ksu_variant.package_name();
+                        let (code, out) = transport
+                            .exec(&format!("pm path {}", pkg))
+                            .await
+                            .unwrap_or((1, String::new()));
+                        if code != 0 || !out.contains("package:") {
+                            let _ = event_tx.send(EngineEvent::Log {
+                                level: LogLevel::Info,
+                                line: t!(
+                                    "log.manager_installing",
+                                    name = options.ksu_variant.display_name()
+                                )
+                                .to_string(),
+                            });
+                            let remote_install_apk = "/data/local/tmp/rmv/manager_install.apk";
+                            if transport.push(apk_path, remote_install_apk).await.is_ok() {
+                                let (inst_code, inst_out) = transport
+                                    .exec(&format!("pm install -r -d {}", remote_install_apk))
+                                    .await
+                                    .unwrap_or((1, String::new()));
+                                let _ = transport
+                                    .exec(&format!("rm -f {}", remote_install_apk))
+                                    .await;
+                                if inst_code == 0
+                                    && (inst_out.contains("Success") || inst_out.is_empty())
+                                {
+                                    let _ = event_tx.send(EngineEvent::Log {
+                                        level: LogLevel::Ok,
+                                        line: t!(
+                                            "log.manager_install_ok",
+                                            name = options.ksu_variant.display_name()
+                                        )
+                                        .to_string(),
+                                    });
+                                } else {
+                                    let _ = event_tx.send(EngineEvent::Log {
+                                        level: LogLevel::Warn,
+                                        line: t!(
+                                            "error.manager_install_failed",
+                                            name = options.ksu_variant.display_name(),
+                                            message = inst_out.trim()
+                                        )
+                                        .to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

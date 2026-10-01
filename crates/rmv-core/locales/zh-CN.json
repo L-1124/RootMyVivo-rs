@@ -27,7 +27,10 @@
     "local_payload_not_found": "指定的本地载荷文件不存在: %{path}",
     "pairing_failed": "无线配对失败",
     "boot_poisoned": "内核 Slab 内存已被上一轮提权污染 (boot poisoned)，请重启手机后再试。",
-    "device_rebooted": "设备在提权执行过程中发生意外重启 (怀疑内核发生 Panic)。"
+    "device_rebooted": "设备在提权执行过程中发生意外重启 (怀疑内核发生 Panic)。",
+    "manager_asset_not_found": "无法获取 %{name} 的发布资产 (%{version})",
+    "manager_download_failed": "下载 %{name} 管理器 APK 失败: %{message}",
+    "manager_install_failed": "安装 %{name} 管理器 APK 失败: %{message}"
   },
   "gate": {
     "cve_patched_6_6": "已在 Linux 6.6.140+ 修复",
@@ -62,7 +65,13 @@
     "dry_run_complete_msg": "模拟完成，未向设备下发文件。载荷: %{path}",
     "exploit_attached": "检测到后台已有运行中的提权进程，已直接附加监听。",
     "exploit_gone": "提权进程已退出，未达成 Root 状态。",
-    "exploit_still_running": "载荷仍在后台持续探测中 (%{secs} 秒)。"
+    "exploit_still_running": "载荷仍在后台持续探测中 (%{secs} 秒)。",
+    "manager_cached_reuse": "复用已缓存管理器: %{filename} (%{size_mb} MB)",
+    "manager_downloading": "[%{index}/%{total}] 正在下载 %{name} (%{version}): %{url}",
+    "manager_download_ok": "管理器下载完成: %{name} -> %{path}",
+    "manager_auto_download": "未检测到本地或已安装的管理器，正在自动下载 %{name}...",
+    "manager_installing": "正在向设备安装 %{name} 管理器 APK...",
+    "manager_install_ok": "管理器 %{name} 安装完成。"
   },
   "cli": {
     "app_about": "vivo / iQOO 设备免解锁临时提权与 KernelSU 工具",
@@ -167,6 +176,23 @@
     "pairing_kind_pairing": "配对中",
     "pairing_kind_connect": "已就绪",
     "pairing_hint_pairing": "等待输入配对码，运行 '%{prog} pair <配对码>'",
-    "pairing_hint_connect": "已就绪可连，运行 '%{prog} check'"
+    "pairing_hint_connect": "已就绪可连，运行 '%{prog} check'",
+    "arg_manager_version": "要下载的管理器版本 Tag（默认下载最新发布版）",
+    "arg_mirror": "GitHub Release 下载加速镜像前缀（如 https://ghproxy.net/ 或 'direct'）",
+    "arg_no_install_manager": "获取 Root 后不自动向手机安装管理器 APK",
+    "manager_about": "管理与下载 KernelSU / SukiSU 管理器 APK",
+    "manager_download_about": "下载指定变体的管理器 APK 至本地缓存",
+    "manager_list_about": "列出本地已缓存的管理器 APK",
+    "manager_install_about": "将已下载的管理器 APK 安装至已连接设备",
+    "manager_empty": "暂无已缓存的管理器 APK。",
+    "config_about": "查看或配置持久化全局设置",
+    "config_mirror_title": "GitHub 镜像配置",
+    "config_mirror_current": "生效镜像",
+    "config_mirror_saved": "已保存 GitHub 镜像: %{mirror}",
+    "config_mirror_reset": "已重置 GitHub 镜像配置为默认",
+    "config_mirror_already_default": "当前已使用默认镜像设置",
+    "config_set_mirror_about": "设置自定义 GitHub Release 镜像加速前缀",
+    "config_get_mirror_about": "查看当前生效的 GitHub Release 镜像配置",
+    "config_reset_mirror_about": "恢复 GitHub Release 镜像为默认级联策略"
   }
 }
