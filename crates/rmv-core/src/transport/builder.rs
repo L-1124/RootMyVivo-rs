@@ -1,25 +1,22 @@
-use crate::error::Result;
-#[cfg(feature = "native-wifi")]
-use crate::transport::wifi::AdbWifiTransport;
-#[cfg(feature = "native-usb")]
-use crate::transport::AdbUsbTransport;
+use crate::error::{Result, RmvError};
+use crate::transport::client::AdbClientTransport;
 use crate::transport::{AdbCliTransport, Transport};
+use adb_client::server::ADBServer;
+use rust_i18n::t;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportMode {
     Auto,
-    Usb,
-    Wifi,
+    Client,
     Cli,
 }
 
 impl TransportMode {
     pub fn from_str_opt(s: Option<&str>) -> Self {
         match s.map(|v| v.to_ascii_lowercase()).as_deref() {
-            Some("usb") => Self::Usb,
-            Some("wifi") | Some("tcp") => Self::Wifi,
             Some("cli") => Self::Cli,
+            Some("client") | Some("server") | Some("usb") | Some("wifi") => Self::Client,
             _ => Self::Auto,
         }
     }
@@ -32,75 +29,74 @@ impl TransportBuilder {
         serial: Option<String>,
         mode: TransportMode,
     ) -> Result<Arc<dyn Transport>> {
-        match mode {
-            TransportMode::Cli => {
-                let cli = AdbCliTransport::resolve(serial).await?;
-                Ok(Arc::new(cli))
-            }
-            #[cfg(feature = "native-usb")]
-            TransportMode::Usb => {
-                let usb = AdbUsbTransport::new(serial);
-                usb.connect().await?;
-                Ok(Arc::new(usb))
-            }
-            #[cfg(not(feature = "native-usb"))]
-            TransportMode::Usb => {
-                let cli = AdbCliTransport::resolve(serial).await?;
-                Ok(Arc::new(cli))
-            }
-            #[cfg(feature = "native-wifi")]
-            TransportMode::Wifi => {
-                let wifi = AdbWifiTransport::new(serial);
-                wifi.connect().await?;
-                Ok(Arc::new(wifi))
-            }
-            #[cfg(not(feature = "native-wifi"))]
-            TransportMode::Wifi => {
-                let cli = AdbCliTransport::resolve(serial).await?;
-                Ok(Arc::new(cli))
-            }
-            TransportMode::Auto => {
-                // 1. If serial looks like IP:PORT, directly try Wifi
-                if let Some(s) = &serial {
-                    if s.contains(':')
-                        && s.split(':')
-                            .next()
-                            .unwrap_or("")
-                            .parse::<std::net::IpAddr>()
-                            .is_ok()
-                    {
-                        #[cfg(feature = "native-wifi")]
-                        {
-                            let wifi = AdbWifiTransport::new(Some(s.clone()));
-                            if wifi.connect().await.is_ok() {
-                                return Ok(Arc::new(wifi));
-                            }
-                        }
-                    }
-                }
+        if mode == TransportMode::Cli {
+            let cli = AdbCliTransport::resolve(serial).await?;
+            return Ok(Arc::new(cli));
+        }
 
-                // 2. Try native USB
-                #[cfg(feature = "native-usb")]
-                {
-                    let usb = AdbUsbTransport::new(serial.clone());
-                    if usb.connect().await.is_ok() {
-                        return Ok(Arc::new(usb));
-                    }
+        // 1. If explicit serial is provided
+        if let Some(s) = &serial {
+            // If serial looks like IP:port, try connect_device first if not online
+            if s.contains(':') {
+                if let Ok(addr) = s.parse::<std::net::SocketAddrV4>() {
+                    let mut server = ADBServer::default();
+                    let _ = server.connect_device(addr);
                 }
-
-                // 3. Try native Wi-Fi mDNS discovery
-                #[cfg(feature = "native-wifi")]
-                {
-                    let wifi = AdbWifiTransport::new(None);
-                    if wifi.connect().await.is_ok() {
-                        return Ok(Arc::new(wifi));
-                    }
-                }
-
-                // 4. Fallback to CLI
-                let cli = AdbCliTransport::resolve(serial).await?;
-                Ok(Arc::new(cli))
+            }
+            let client = AdbClientTransport::new(Some(s.clone()), None);
+            if client.is_alive().await {
+                return Ok(Arc::new(client));
             }
         }
+
+        // 2. Query devices from ADB server
+        let mut server = ADBServer::default();
+        let devices = server.devices().map_err(|e| RmvError::Adb {
+            message: format!("Failed to query devices from ADB server: {}", e),
+            code: None,
+        })?;
+
+        let online_devices: Vec<String> = devices
+            .into_iter()
+            .filter(|d| d.state == adb_client::server::DeviceState::Device)
+            .map(|d| d.identifier)
+            .collect();
+
+        if online_devices.is_empty() {
+            // Fallback to CLI subprocess
+            if let Ok(cli) = AdbCliTransport::resolve(serial.clone()).await {
+                if cli.is_alive().await {
+                    return Ok(Arc::new(cli));
+                }
+            }
+            return Err(RmvError::DeviceNotFound(
+                t!("error.device_not_found_cli").to_string(),
+            ));
+        }
+
+        if online_devices.len() == 1 {
+            let dev = online_devices.into_iter().next().unwrap();
+            let client = AdbClientTransport::new(Some(dev), None);
+            return Ok(Arc::new(client));
+        }
+
+        if let Some(target) = serial {
+            if online_devices.contains(&target) {
+                let client = AdbClientTransport::new(Some(target), None);
+                return Ok(Arc::new(client));
+            }
+            return Err(RmvError::DeviceNotFound(
+                t!("error.device_not_found_cli").to_string(),
+            ));
+        }
+
+        Err(RmvError::Adb {
+            message: t!(
+                "error.multiple_devices",
+                devices = online_devices.join(", ")
+            )
+            .to_string(),
+            code: None,
+        })
     }
 }

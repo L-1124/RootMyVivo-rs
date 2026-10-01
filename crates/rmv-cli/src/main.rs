@@ -36,8 +36,11 @@ enum Commands {
         action: Option<CatalogAction>,
     },
     Pair {
-        addr: String,
-        code: String,
+        #[arg(short, long)]
+        list: bool,
+
+        addr: Option<String>,
+        code: Option<String>,
     },
 
     Run {
@@ -211,6 +214,7 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
         })
         .mut_subcommand("pair", |sc| {
             sc.about(t!("cli.pair_about").to_string())
+                .mut_arg("list", |a| a.help(t!("cli.arg_pair_list").to_string()))
                 .mut_arg("addr", |a| a.help(t!("cli.arg_pair_addr").to_string()))
                 .mut_arg("code", |a| a.help(t!("cli.arg_pair_code").to_string()))
         })
@@ -286,7 +290,7 @@ async fn main() {
             .await
         }
         Commands::Clean => commands::run_clean(cli.serial, transport_mode).await,
-        Commands::Pair { addr, code } => commands::run_pair(&addr, &code).await,
+        Commands::Pair { list, addr, code } => commands::run_pair(list, addr, code).await,
         Commands::History { action } => match action.unwrap_or(HistoryAction::List { limit: 15 }) {
             HistoryAction::List { limit } => commands::run_history_list(limit).await,
             HistoryAction::Show { id } => commands::run_history_show(&id).await,
@@ -295,7 +299,7 @@ async fn main() {
     };
 
     if let Err(err) = result {
-        eprintln!("{} {}", "[fail]".red().bold(), err);
+        eprintln!("{} {:#}", "[fail]".red().bold(), err);
         std::process::exit(1);
     }
 }

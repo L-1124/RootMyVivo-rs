@@ -1,41 +1,20 @@
-#[cfg(not(target_arch = "wasm32"))]
 pub mod adb;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod builder;
-#[cfg(all(feature = "native-usb", not(target_arch = "wasm32")))]
-pub mod usb;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod wifi;
+pub mod client;
+pub mod mdns;
 
 use crate::device::DeviceInfo;
 use crate::error::Result;
 use async_trait::async_trait;
 use std::path::Path;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use adb::AdbCliTransport;
-#[cfg(not(target_arch = "wasm32"))]
+pub use adb_client::server::ADBServer;
 pub use builder::{TransportBuilder, TransportMode};
-#[cfg(all(feature = "native-usb", not(target_arch = "wasm32")))]
-pub use usb::native_usb::AdbUsbTransport;
-#[cfg(all(feature = "native-wifi", not(target_arch = "wasm32")))]
-pub use wifi::pairing::AdbPairing;
-#[cfg(all(feature = "native-wifi", not(target_arch = "wasm32")))]
-pub use wifi::AdbWifiTransport;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub trait MaybeSend: Send + Sync {}
-#[cfg(not(target_arch = "wasm32"))]
-impl<T: Send + Sync> MaybeSend for T {}
-
-#[cfg(target_arch = "wasm32")]
-pub trait MaybeSend {}
-#[cfg(target_arch = "wasm32")]
-impl<T> MaybeSend for T {}
-
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait Transport: MaybeSend {
+pub use client::AdbClientTransport;
+pub use mdns::{AdbMdnsDiscovery, AdbServiceKind, DiscoveredAdbService};
+#[async_trait]
+pub trait Transport: Send + Sync {
     async fn exec(&self, cmd: &str) -> Result<(i32, String)>;
     async fn push(&self, local_path: &Path, remote_path: &str) -> Result<()>;
     async fn pull(&self, remote_path: &str, local_path: &Path) -> Result<()>;
@@ -48,8 +27,7 @@ pub trait Transport: MaybeSend {
 
 use std::sync::Arc;
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[async_trait]
 impl<T: ?Sized + Transport> Transport for Arc<T> {
     async fn exec(&self, cmd: &str) -> Result<(i32, String)> {
         (**self).exec(cmd).await
