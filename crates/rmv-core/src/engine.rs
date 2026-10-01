@@ -407,7 +407,9 @@ impl ExploitEngine {
                 .expect("static attempt pattern");
             let mut payload_alive = false;
             let mut boot_poisoned = false;
-            while elapsed_sec < timeout_limit {
+            let mut attempts_exhausted = false;
+            let mut process_exited = false;
+            while timeout_limit == 0 || elapsed_sec < timeout_limit {
                 sleep(Duration::from_secs(2)).await;
                 elapsed_sec += 2;
 
@@ -487,11 +489,13 @@ impl ExploitEngine {
 
                 // 载荷写下的完成哨兵：所有轮次已跑完
                 if !done_part.is_empty() {
+                    attempts_exhausted = true;
                     break;
                 }
 
                 // 载荷进程已退出且无完成哨兵：崩溃或异常中断，无需空等窗口
                 if elapsed_sec >= 6 && !payload_alive {
+                    process_exited = true;
                     let _ = event_tx.send(EngineEvent::Log {
                         level: LogLevel::Error,
                         line: t!("log.exploit_gone").to_string(),
@@ -501,13 +505,32 @@ impl ExploitEngine {
             }
 
             if !is_rooted {
+                let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                 if boot_poisoned {
                     let _ = event_tx.send(EngineEvent::Log {
                         level: LogLevel::Error,
                         line: t!("log.boot_poisoned").to_string(),
                     });
-                    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                     return Err(RmvError::BootPoisoned);
+                }
+
+                if attempts_exhausted {
+                    let count = last_attempt.unwrap_or(options.attempts);
+                    let err_msg = t!(
+                        "error.exploit_attempts_exhausted",
+                        count = count.to_string()
+                    )
+                    .to_string();
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Error,
+                        line: err_msg.clone(),
+                    });
+                    return Err(RmvError::ExploitFailed(err_msg));
+                }
+
+                if process_exited {
+                    let err_msg = t!("error.exploit_process_exited").to_string();
+                    return Err(RmvError::ExploitFailed(err_msg));
                 }
 
                 if payload_alive {
@@ -520,7 +543,6 @@ impl ExploitEngine {
                         .to_string(),
                     });
                 }
-                let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
                 return Err(RmvError::ExploitTimeout {
                     last_attempt,
                     log_tail: last_log_tail,
