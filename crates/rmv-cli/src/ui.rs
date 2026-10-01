@@ -6,6 +6,7 @@ use rust_i18n::t;
 pub struct CliUi {
     spinner: ProgressBar,
     download_bar: Option<ProgressBar>,
+    printed_log_lines: std::collections::HashSet<String>,
 }
 
 impl CliUi {
@@ -20,6 +21,7 @@ impl CliUi {
         Self {
             spinner,
             download_bar: None,
+            printed_log_lines: std::collections::HashSet::new(),
         }
     }
 
@@ -33,8 +35,10 @@ impl CliUi {
             } => {
                 let tag = format!("[{}/{}]", index, total).bold().cyan();
                 let phase_name = phase.display_name().bold();
-                self.spinner.set_message(format!("{} {}: {}", tag, phase_name, desc));
-                self.spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+                self.spinner
+                    .set_message(format!("{} {}: {}", tag, phase_name, desc));
+                self.spinner
+                    .enable_steady_tick(std::time::Duration::from_millis(80));
             }
             EngineEvent::Log { level, line } => {
                 let prefix = match level {
@@ -78,6 +82,20 @@ impl CliUi {
                 }
             }
             EngineEvent::ExploitLive { lines, .. } => {
+                for line in &lines {
+                    if !self.printed_log_lines.contains(line) {
+                        self.printed_log_lines.insert(line.clone());
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("[+]")
+                            || trimmed.starts_with("[-]")
+                            || trimmed.starts_with("[*]")
+                        {
+                            self.spinner.suspend(|| {
+                                println!("  {}", trimmed.dimmed());
+                            });
+                        }
+                    }
+                }
                 if let Some(last_line) = lines.last() {
                     let msg = t!("cli.exploit_running", line = last_line.dimmed().to_string());
                     self.spinner.set_message(msg);

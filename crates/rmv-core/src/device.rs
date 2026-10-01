@@ -77,7 +77,7 @@ pub const ROOT_PROBE_CMD: &str = "\
     echo __RMV_SYS_SU__; /system/bin/su -c id 2>/dev/null; \
     echo __RMV_TMP_SU__; if [ -x /data/local/tmp/rmv/su ]; then /data/local/tmp/rmv/su -c id 2>/dev/null && echo RMV_PATH_RMV; else /data/local/tmp/su -c id 2>/dev/null && echo RMV_PATH_TMP; fi; \
     echo __RMV_BARE_SU__; su -c id 2>/dev/null; \
-    echo __RMV_MAPS__; grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1; \
+    echo __RMV_MAPS__; pgrep -x true 2>/dev/null || pgrep -f preload.so 2>/dev/null; \
     echo __RMV_DONE__; [ -f /data/local/tmp/rmv/DONE ] && echo RMV_DONE; \
     echo __RMV_END__";
 
@@ -140,7 +140,7 @@ pub fn parse_root_probe(probe_output: &str) -> RootStatus {
     let tmp_su_ok = tmp_su_part.contains("uid=0");
     let bare_su_ok = bare_su_part.contains("uid=0");
 
-    let has_preload_mapped = maps_part.contains("/proc/");
+    let has_preload_mapped = !maps_part.is_empty();
     let has_done_sentinel = done_part.contains("RMV_DONE");
     let exploit_running = has_preload_mapped && !has_done_sentinel;
 

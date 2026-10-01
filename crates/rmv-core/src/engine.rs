@@ -378,7 +378,7 @@ impl ExploitEngine {
             }
         }
 
-        // 检查是否已拥有 root 或后台有运行中的注入探测
+        // 检查是否已拥有 root 权限
         let root_status = check_root_status(transport).await?;
         let already_rooted = root_status.is_rooted();
         let mut is_rooted = already_rooted;
@@ -388,19 +388,15 @@ impl ExploitEngine {
                 line: t!("log.root_already").to_string(),
             });
         } else {
-            // 上一轮客户端超时退出时载荷常仍在探测：此时附加监听，避免重复注入
-            if root_status.is_exploit_running() {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Warn,
-                    line: t!("log.exploit_attached").to_string(),
-                });
-            } else {
-                let run_cmd = format!(
-                    "cd {} && (RMV_HOME='{}' RMV_ATTEMPTS='{}' RMV_RETRY_DELAY='{}' LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 &)",
-                    remote_dir, remote_dir, options.attempts, options.retry_delay, remote_so
-                );
-                let _ = transport.exec(&run_cmd).await?;
-            }
+            // 启动前先杀死残留的僵死 true 进程并清空历史 DONE 哨兵，保证全新提权环境
+            let _ = transport
+                .exec("pkill -9 -x true 2>/dev/null; rm -f /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE /data/local/tmp/rmv/live.log")
+                .await;
+            let run_cmd = format!(
+                "cd {} && (RMV_HOME='{}' RMV_ATTEMPTS='{}' RMV_RETRY_DELAY='{}' LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 &)",
+                remote_dir, remote_dir, options.attempts, options.retry_delay, remote_so
+            );
+            let _ = transport.exec(&run_cmd).await?;
 
             // CFI 探测单轮最多 24 次且每次带随机延迟，窗口需覆盖整个探测期
             let timeout_limit = options.timeout_secs;
@@ -415,14 +411,13 @@ impl ExploitEngine {
                 sleep(Duration::from_secs(2)).await;
                 elapsed_sec += 2;
 
-                // Single round-trip probe: logs, completion sentinel, liveness, su, boot_id
+                // Single round-trip fast probe: logs, completion sentinel, liveness, su
                 let (_, probe) = transport
                     .exec(
                         "tail -n 15 /data/local/tmp/rmv/live.log 2>/dev/null; \
                          echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE 2>/dev/null | head -n 1; \
-                         echo __RMV_ALIVE__; grep -l rmv/preload.so /proc/[0-9]*/maps 2>/dev/null | head -n 1; \
-                         echo __RMV_SU__; /system/bin/su -c id 2>/dev/null || /data/local/tmp/rmv/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null; \
-                         echo __RMV_BOOTID__; cat /proc/sys/kernel/random/boot_id 2>/dev/null; \
+                         echo __RMV_ALIVE__; pgrep -x true 2>/dev/null || pgrep -f preload.so 2>/dev/null; \
+                         echo __RMV_SU__; if [ -x /data/local/tmp/rmv/su ]; then /data/local/tmp/rmv/su -c id 2>/dev/null; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c id 2>/dev/null; else /system/bin/su -c id 2>/dev/null; fi; \
                          echo __RMV_END__",
                     )
                     .await?;
@@ -454,30 +449,11 @@ impl ExploitEngine {
                     .split("__RMV_SU__")
                     .nth(1)
                     .unwrap_or("")
-                    .split("__RMV_BOOTID__")
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                let bootid_part = probe
-                    .split("__RMV_BOOTID__")
-                    .nth(1)
-                    .unwrap_or("")
                     .split("__RMV_END__")
                     .next()
                     .unwrap_or("")
                     .trim()
                     .to_string();
-
-                // Detect unexpected reboot or kernel panic
-                if !bootid_part.is_empty() && bootid_part != device.boot_id {
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Error,
-                        line: t!("log.device_rebooted").to_string(),
-                    });
-                    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
-                    return Err(RmvError::DeviceRebooted);
-                }
                 if !tail_part.is_empty() && tail_part != last_log_tail {
                     last_log_tail = tail_part.clone();
                     if let Some(caps) = attempt_re.captures(&tail_part) {
@@ -502,7 +478,7 @@ impl ExploitEngine {
                     boot_poisoned = true;
                 }
 
-                payload_alive = alive_part.contains("/proc/");
+                payload_alive = !alive_part.is_empty();
 
                 if su_part.contains("uid=0") {
                     is_rooted = true;
