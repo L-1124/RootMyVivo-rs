@@ -643,18 +643,6 @@ impl ExploitEngine {
                     }
                 }
 
-                KsuOrchestrator::late_load(
-                    transport,
-                    options.ksu_variant,
-                    None,
-                    host_apk.as_deref(),
-                )
-                .await?;
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Ok,
-                    line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),
-                });
-
                 if options.install_manager {
                     if let Some(apk_path) = host_apk.as_ref() {
                         let pkg = options.ksu_variant.package_name();
@@ -706,6 +694,18 @@ impl ExploitEngine {
                         }
                     }
                 }
+
+                KsuOrchestrator::late_load(
+                    transport,
+                    options.ksu_variant,
+                    None,
+                    host_apk.as_deref(),
+                )
+                .await?;
+                let _ = event_tx.send(EngineEvent::Log {
+                    level: LogLevel::Ok,
+                    line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),
+                });
             }
         }
 
