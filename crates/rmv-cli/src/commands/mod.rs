@@ -8,11 +8,74 @@ use rmv_core::{
 };
 use rust_i18n::t;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::mpsc;
+
+pub async fn resolve_transport(
+    serial: Option<String>,
+    mode: TransportMode,
+) -> Result<Arc<dyn Transport>> {
+    if let Some(s) = serial {
+        return TransportBuilder::resolve(Some(s), mode)
+            .await
+            .map_err(Into::into);
+    }
+
+    let devices = TransportBuilder::list_online_devices(mode).await?;
+    if devices.is_empty() {
+        return Err(rmv_core::RmvError::DeviceNotFound(
+            t!("error.device_not_found_cli").to_string(),
+        )
+        .into());
+    }
+
+    if devices.len() == 1 {
+        let (s, _) = &devices[0];
+        return TransportBuilder::resolve(Some(s.clone()), mode)
+            .await
+            .map_err(Into::into);
+    }
+
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() {
+        let items: Vec<String> = devices
+            .iter()
+            .map(|(s, model)| {
+                if !model.is_empty() {
+                    format!("{} ({})", s.bold().cyan(), model.green())
+                } else {
+                    s.bold().cyan().to_string()
+                }
+            })
+            .collect();
+
+        let prompt = t!("cli.multiple_devices_prompt");
+        let selection = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(prompt)
+            .default(0)
+            .items(&items)
+            .interact_opt()?;
+
+        if let Some(idx) = selection {
+            let (chosen_serial, _) = &devices[idx];
+            return TransportBuilder::resolve(Some(chosen_serial.clone()), mode)
+                .await
+                .map_err(Into::into);
+        } else {
+            anyhow::bail!(t!("error.cancelled"));
+        }
+    }
+
+    let device_names: Vec<String> = devices.into_iter().map(|(s, _)| s).collect();
+    anyhow::bail!(t!(
+        "error.multiple_devices",
+        devices = device_names.join(", ")
+    ));
+}
 
 pub async fn run_check(serial: Option<String>, mode: TransportMode) -> Result<()> {
     println!("{}", t!("cli.probing_device").bold().cyan());
-    let transport = TransportBuilder::resolve(serial, mode).await?;
+    let transport = resolve_transport(serial, mode).await?;
     let dev = transport.get_device_info().await?;
 
     println!("\n{}", t!("cli.device_summary").cyan().bold());
@@ -189,7 +252,7 @@ pub async fn run_catalog(
         )
     );
 
-    if let Ok(transport) = TransportBuilder::resolve(serial, mode).await {
+    if let Ok(transport) = resolve_transport(serial, mode).await {
         if let Ok(dev) = transport.get_device_info().await {
             println!("{}", t!("cli.matching_device").bold().cyan());
             match catalog.match_payload(&dev) {
@@ -249,7 +312,7 @@ pub async fn run_exploit(
     timeout_secs: u64,
     mode: TransportMode,
 ) -> Result<()> {
-    let transport = TransportBuilder::resolve(serial, mode).await?;
+    let transport = resolve_transport(serial, mode).await?;
     let ksu_variant = KsuVariant::from_id(&ksu);
 
     let options = EngineOptions {
@@ -292,7 +355,7 @@ pub async fn run_exploit(
 
 pub async fn run_clean(serial: Option<String>, mode: TransportMode) -> Result<()> {
     println!("{} {}", "[ .. ]".cyan(), t!("cli.cleaning_traces"));
-    let transport = TransportBuilder::resolve(serial, mode).await?;
+    let transport = resolve_transport(serial, mode).await?;
     let outcome = Persistence::clean_traces(&transport)
         .await
         .context(t!("error.exploit_failed", message = "clean"))?;
@@ -635,7 +698,7 @@ pub async fn run_manager_install(
         "[ .. ]".cyan(),
         t!("log.manager_installing", name = variant.display_name())
     );
-    let transport = TransportBuilder::resolve(serial, mode).await?;
+    let transport = resolve_transport(serial, mode).await?;
     let remote_path = "/data/local/tmp/rmv/manager_install.apk";
     transport.push(&apk_path, remote_path).await?;
     let (code, out) = transport

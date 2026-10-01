@@ -79,10 +79,9 @@ impl TransportBuilder {
             let client = AdbClientTransport::new(Some(dev), None);
             return Ok(Arc::new(client));
         }
-
-        if let Some(target) = serial {
-            if online_devices.contains(&target) {
-                let client = AdbClientTransport::new(Some(target), None);
+        if let Some(target) = &serial {
+            if online_devices.contains(target) {
+                let client = AdbClientTransport::new(Some(target.clone()), None);
                 return Ok(Arc::new(client));
             }
             return Err(RmvError::DeviceNotFound(
@@ -98,5 +97,45 @@ impl TransportBuilder {
             .to_string(),
             code: None,
         })
+    }
+
+    pub async fn list_online_devices(mode: TransportMode) -> Result<Vec<(String, String)>> {
+        if mode == TransportMode::Cli {
+            let cli_devs = AdbCliTransport::list_devices().await.unwrap_or_default();
+            return Ok(cli_devs.into_iter().map(|d| (d.clone(), d)).collect());
+        }
+
+        let mut server = ADBServer::default();
+        let devices = server.devices().map_err(|e| RmvError::Adb {
+            message: format!("Failed to query devices from ADB server: {}", e),
+            code: None,
+        })?;
+
+        let online: Vec<String> = devices
+            .into_iter()
+            .filter(|d| d.state == adb_client::server::DeviceState::Device)
+            .map(|d| d.identifier)
+            .collect();
+
+        if online.is_empty() {
+            let cli_devs = AdbCliTransport::list_devices().await.unwrap_or_default();
+            return Ok(cli_devs.into_iter().map(|d| (d.clone(), d)).collect());
+        }
+
+        let mut results = Vec::with_capacity(online.len());
+        for dev in online {
+            let client = AdbClientTransport::new(Some(dev.clone()), None);
+            let model_desc = match tokio::time::timeout(
+                std::time::Duration::from_millis(600),
+                client.exec("getprop ro.product.model"),
+            )
+            .await
+            {
+                Ok(Ok((0, out))) if !out.trim().is_empty() => out.trim().to_string(),
+                _ => String::new(),
+            };
+            results.push((dev, model_desc));
+        }
+        Ok(results)
     }
 }
