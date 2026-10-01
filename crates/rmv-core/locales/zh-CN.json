@@ -62,6 +62,7 @@
     "exploit_start": "正在后台拉起提权进程并监听状态...",
     "reboot_pristine": "正在重启手机以建立干净状态...",
     "reboot_done": "手机已就绪。",
+    "waiting_boot_complete": "等待设备系统完全就绪...",
     "uid0_ok": "已获取临时 Root 权限 (UID=0)。",
     "ksu_start": "正在加载 %{name} 内核驱动...",
     "ksu_ok": "%{name} 驱动加载成功 (已生效)。",

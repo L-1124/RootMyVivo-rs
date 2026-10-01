@@ -62,6 +62,7 @@
     "exploit_start": "Running background exploit and monitoring status...",
     "reboot_pristine": "Rebooting device to ensure a clean initial state...",
     "reboot_done": "Device rebooted and connected.",
+    "waiting_boot_complete": "Waiting for device system to be ready...",
     "uid0_ok": "Root privileges acquired (UID=0).",
     "ksu_start": "Loading %{name} kernel driver...",
     "ksu_ok": "%{name} driver is active.",

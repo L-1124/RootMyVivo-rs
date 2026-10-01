@@ -169,7 +169,7 @@ impl ExploitEngine {
             });
         }
 
-        let device = transport.get_device_info().await?;
+        let mut device = transport.get_device_info().await?;
         let _ = event_tx.send(EngineEvent::Log {
             level: LogLevel::Ok,
             line: t!(
@@ -346,6 +346,37 @@ impl ExploitEngine {
             total: total_steps,
             desc: t!("log.exploit_start").to_string(),
         });
+
+        // 确保设备处于已完全启动就绪状态 (sys.boot_completed == 1)
+        if let Ok((code, out)) = transport.exec("getprop sys.boot_completed").await {
+            if code != 0 || out.trim() != "1" {
+                let _ = event_tx.send(EngineEvent::Log {
+                    level: LogLevel::Info,
+                    line: t!("log.waiting_boot_complete").to_string(),
+                });
+                let boot_deadline = std::time::Instant::now();
+                while boot_deadline.elapsed() < Duration::from_secs(120) {
+                    sleep(Duration::from_secs(2)).await;
+                    if let Ok((c, o)) = transport.exec("getprop sys.boot_completed").await {
+                        if c == 0 && o.trim() == "1" {
+                            break;
+                        }
+                    }
+                }
+                sleep(Duration::from_secs(4)).await;
+            }
+        }
+
+        // 刷新当前真实的 live boot_id，杜绝因开机延迟等造成的假阳性误判
+        if let Ok((code, out)) = transport
+            .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
+            .await
+        {
+            let cur = out.trim();
+            if code == 0 && !cur.is_empty() {
+                device.boot_id = cur.to_string();
+            }
+        }
 
         // 检查是否已拥有 root 或后台有运行中的注入探测
         let root_status = check_root_status(transport).await?;

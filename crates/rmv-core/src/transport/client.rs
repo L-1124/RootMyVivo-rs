@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::device::DeviceInfo;
 use crate::error::{Result, RmvError};
 use crate::transport::Transport;
+use rust_i18n::t;
 
 #[derive(Debug, Clone)]
 pub struct AdbClientTransport {
@@ -156,19 +157,84 @@ impl Transport for AdbClientTransport {
     }
 
     async fn reboot_and_wait(&self, timeout_sec: u64) -> Result<()> {
+        let initial_boot_id = self
+            .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
+            .await
+            .map(|(_, out)| out.trim().to_string())
+            .unwrap_or_default();
+
         let _ = self.exec("reboot").await;
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
         let start = std::time::Instant::now();
         let timeout_dur = std::time::Duration::from_secs(timeout_sec);
-        while start.elapsed() < timeout_dur {
-            if self.is_alive().await {
-                return Ok(());
+
+        // 1. 等待设备断开或初始会话失效
+        while start.elapsed() < std::time::Duration::from_secs(30) {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            if let Ok((code, out)) = self
+                .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
+                .await
+            {
+                let cur = out.trim();
+                if code != 0
+                    || cur.is_empty()
+                    || (!initial_boot_id.is_empty() && cur != initial_boot_id)
+                {
+                    break;
+                }
+            } else {
+                break;
             }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
-        Err(RmvError::Adb {
-            message: "Device reboot timeout".to_string(),
-            code: None,
-        })
+
+        // 2. 等待 adbd 重连，且确认 boot_id 确实已改变（已进入新内核会话）
+        let mut new_session_online = false;
+        while start.elapsed() < timeout_dur {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if let Ok((code, out)) = self
+                .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
+                .await
+            {
+                let cur = out.trim();
+                if code == 0 && !cur.is_empty() {
+                    if initial_boot_id.is_empty() || cur != initial_boot_id {
+                        new_session_online = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !new_session_online {
+            return Err(RmvError::Adb {
+                message: t!("error.reboot_timeout", seconds = timeout_sec.to_string()).to_string(),
+                code: None,
+            });
+        }
+
+        // 3. 等待 Android 框架系统完全启动 (sys.boot_completed == 1)
+        while start.elapsed() < timeout_dur {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if let Ok((code, out)) = self.exec("getprop sys.boot_completed").await {
+                if code == 0 && out.trim() == "1" {
+                    break;
+                }
+            }
+        }
+
+        // 4. 等待包管理器与系统服务就绪 (pm path android)
+        while start.elapsed() < timeout_dur {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            if let Ok((code, out)) = self.exec("pm path android 2>/dev/null").await {
+                if code == 0 && out.contains("package:") {
+                    break;
+                }
+            }
+        }
+
+        // 5. 关键静默等待 (5秒)：让开机后广播风暴结束、Zygote稳定、内核 Slab 内存恢复平稳
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+        Ok(())
     }
 }
