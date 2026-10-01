@@ -24,15 +24,53 @@ const CLEAN: &str = "rm -rf /data/local/tmp/rmv /data/local/tmp/ota /data/local/
 
 impl Persistence {
     pub async fn clean_traces<T: Transport>(transport: &T) -> Result<CleanOutcome> {
-        // 优先以 root 清理，无 root 时退回 shell 身份
-        let (root_code, _) = transport
-            .exec(&format!("su -c '{}'", CLEAN))
-            .await
-            .unwrap_or((-1, String::new()));
-        if root_code == 0 {
-            return Ok(CleanOutcome::WithRoot);
+        // 1. 如果 KernelSU 已加载，使用 ksud debug su 直接以内核 root (u:r:ksu:s0) 穿透 SELinux 清理
+        let ksu_clean_cmd = format!(
+            r#"sh -c '
+                KSUD=""
+                if [ -x /data/local/tmp/rmv/ksud ]; then
+                    KSUD="/data/local/tmp/rmv/ksud"
+                elif [ -x /data/adb/ksu/bin/ksud ]; then
+                    KSUD="/data/adb/ksu/bin/ksud"
+                elif command -v ksud >/dev/null 2>&1; then
+                    KSUD="ksud"
+                fi
+                if [ -n "$KSUD" ]; then
+                    echo "{}" | $KSUD debug su 2>/dev/null
+                else
+                    exit 1
+                fi
+            '"#,
+            CLEAN
+        );
+        if let Ok((code, _)) = transport.exec(&ksu_clean_cmd).await {
+            if code == 0 {
+                return Ok(CleanOutcome::WithRoot);
+            }
         }
 
+        // 2. 尝试临时 su 客户端或 /system/bin/su 执行 root 清理
+        let temp_su_clean_cmd = format!(
+            r#"sh -c '
+                if [ -x /data/local/tmp/rmv/su ]; then
+                    RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c "{}" 2>/dev/null
+                elif [ -x /data/local/tmp/su ]; then
+                    /data/local/tmp/su -c "{}" 2>/dev/null
+                elif [ -x /system/bin/su ]; then
+                    /system/bin/su -c "{}" 2>/dev/null
+                else
+                    su -c "{}" 2>/dev/null
+                fi
+            '"#,
+            CLEAN, CLEAN, CLEAN, CLEAN
+        );
+        if let Ok((code, _)) = transport.exec(&temp_su_clean_cmd).await {
+            if code == 0 {
+                return Ok(CleanOutcome::WithRoot);
+            }
+        }
+
+        // 3. 无 root 时退回 shell 身份尽力清理
         let (code, out) = transport.exec(CLEAN).await?;
         if code != 0 {
             return Err(RmvError::ExploitFailed(
