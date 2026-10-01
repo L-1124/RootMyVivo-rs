@@ -419,7 +419,7 @@ impl ExploitEngine {
                         "tail -n 15 /data/local/tmp/rmv/live.log 2>/dev/null; \
                          echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE 2>/dev/null | head -n 1; \
                          echo __RMV_ALIVE__; pgrep -x true 2>/dev/null || pgrep -f preload.so 2>/dev/null; \
-                         echo __RMV_SU__; if [ -x /data/local/tmp/rmv/su ]; then /data/local/tmp/rmv/su -c id 2>/dev/null; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c id 2>/dev/null; else /system/bin/su -c id 2>/dev/null; fi; \
+                         echo __RMV_SU__; [ -e /data/local/tmp/rmv/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf /data/local/tmp/rmv/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null; [ -e /data/local/tmp/rmv/su ] && [ ! -e /data/local/tmp/su ] && ln -sf /data/local/tmp/rmv/su /data/local/tmp/su 2>/dev/null; RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null || /system/bin/su -c id 2>/dev/null; \
                          echo __RMV_END__",
                     )
                     .await?;
@@ -487,8 +487,25 @@ impl ExploitEngine {
                     break;
                 }
 
-                // 载荷写下的完成哨兵：所有轮次已跑完
-                if !done_part.is_empty() {
+                // 载荷写下的完成哨兵：DONE ('1' = 成功, '0' = 失败)
+                if done_part.contains('1') {
+                    let mut su_ready = false;
+                    for _ in 0..10 {
+                        let (_, su_check) = transport
+                            .exec("RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null || /system/bin/su -c id 2>/dev/null")
+                            .await
+                            .unwrap_or((1, String::new()));
+                        if su_check.contains("uid=0") {
+                            su_ready = true;
+                            break;
+                        }
+                        sleep(Duration::from_millis(500)).await;
+                    }
+                    if su_ready {
+                        is_rooted = true;
+                        break;
+                    }
+                } else if done_part.contains('0') {
                     attempts_exhausted = true;
                     break;
                 }

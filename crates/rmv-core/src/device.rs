@@ -75,10 +75,10 @@ impl RootStatus {
 pub const ROOT_PROBE_CMD: &str = "\
     echo __RMV_KSU__; cat /proc/modules 2>/dev/null | grep -i kernelsu; \
     echo __RMV_SYS_SU__; /system/bin/su -c id 2>/dev/null; \
-    echo __RMV_TMP_SU__; if [ -x /data/local/tmp/rmv/su ]; then /data/local/tmp/rmv/su -c id 2>/dev/null && echo RMV_PATH_RMV; else /data/local/tmp/su -c id 2>/dev/null && echo RMV_PATH_TMP; fi; \
+    echo __RMV_TMP_SU__; [ -e /data/local/tmp/rmv/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf /data/local/tmp/rmv/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null; [ -e /data/local/tmp/rmv/su ] && [ ! -e /data/local/tmp/su ] && ln -sf /data/local/tmp/rmv/su /data/local/tmp/su 2>/dev/null; if [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c id 2>/dev/null && echo RMV_PATH_RMV; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c id 2>/dev/null && echo RMV_PATH_TMP; fi; \
     echo __RMV_BARE_SU__; su -c id 2>/dev/null; \
     echo __RMV_MAPS__; pgrep -x true 2>/dev/null || pgrep -f preload.so 2>/dev/null; \
-    echo __RMV_DONE__; [ -f /data/local/tmp/rmv/DONE ] && echo RMV_DONE; \
+    echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE 2>/dev/null | head -n 1; \
     echo __RMV_END__";
 
 pub fn parse_root_probe(probe_output: &str) -> RootStatus {
@@ -141,7 +141,7 @@ pub fn parse_root_probe(probe_output: &str) -> RootStatus {
     let bare_su_ok = bare_su_part.contains("uid=0");
 
     let has_preload_mapped = !maps_part.is_empty();
-    let has_done_sentinel = done_part.contains("RMV_DONE");
+    let has_done_sentinel = done_part.contains('1') || done_part.contains("RMV_DONE");
     let exploit_running = has_preload_mapped && !has_done_sentinel;
 
     if (has_ksu_module && sys_su_ok) || sys_su_ok {
