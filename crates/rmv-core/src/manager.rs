@@ -327,8 +327,17 @@ impl ManagerDownloader {
             }
         }
 
-        let download_urls =
+        let mut download_urls =
             MirrorConfig::resolve_mirror_urls(&asset_info.download_url, mirror_override);
+
+        if download_urls.len() > 1 {
+            if let Some((hit_idx, _)) = MirrorConfig::probe_fastest(&client, &download_urls).await {
+                if hit_idx > 0 && hit_idx < download_urls.len() {
+                    let hit_url = download_urls.remove(hit_idx);
+                    download_urls.insert(0, hit_url);
+                }
+            }
+        }
 
         let mut success = false;
         let mut last_error = None;
@@ -370,8 +379,14 @@ impl ManagerDownloader {
             };
 
             let total_size = resp.content_length().unwrap_or(asset_info.size);
-            // 先写入临时文件，校验通过后原子重命名，避免中断留下残缺缓存
-            let tmp_path = cache_dir.join(format!("{}.part", dest_filename));
+            static PART_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let seq = PART_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let tmp_path = cache_dir.join(format!(
+                "{}.part.{}.{}",
+                dest_filename,
+                std::process::id(),
+                seq
+            ));
             let mut file = match File::create(&tmp_path).await {
                 Ok(f) => f,
                 Err(e) => return Err(RmvError::Io(e)),
@@ -455,8 +470,26 @@ impl ManagerDownloader {
                 last_error = Some("文件大小不匹配".to_string());
                 continue;
             }
+            if dest_path.exists() {
+                if let Ok(meta) = tokio::fs::metadata(&dest_path).await {
+                    if meta.len() == total_size {
+                        let _ = tokio::fs::remove_file(&tmp_path).await;
+                        success = true;
+                        break;
+                    }
+                }
+            }
 
             if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
+                if dest_path.exists() {
+                    if let Ok(meta) = tokio::fs::metadata(&dest_path).await {
+                        if meta.len() == total_size {
+                            let _ = tokio::fs::remove_file(&tmp_path).await;
+                            success = true;
+                            break;
+                        }
+                    }
+                }
                 let _ = tokio::fs::remove_file(&tmp_path).await;
                 last_error = Some(e.to_string());
                 continue;

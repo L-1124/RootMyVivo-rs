@@ -108,6 +108,58 @@ impl MirrorConfig {
         }
         urls
     }
+
+    pub async fn probe_fastest(
+        client: &reqwest::Client,
+        urls: &[String],
+    ) -> Option<(usize, String)> {
+        if urls.is_empty() {
+            return None;
+        }
+        if urls.len() == 1 {
+            return Some((0, urls[0].clone()));
+        }
+
+        use futures_util::stream::{FuturesUnordered, StreamExt};
+        use std::time::Duration;
+
+        let mut tasks = FuturesUnordered::new();
+        for (idx, url) in urls.iter().enumerate() {
+            let u = url.clone();
+            let c = client.clone();
+            tasks.push(async move {
+                let probe_req = c.head(&u).timeout(Duration::from_millis(2000)).send();
+
+                match probe_req.await {
+                    Ok(resp) if resp.status().is_success() => Some((idx, u)),
+                    _ => {
+                        let range_req = c
+                            .get(&u)
+                            .header(reqwest::header::RANGE, "bytes=0-0")
+                            .timeout(Duration::from_millis(2000))
+                            .send();
+                        match range_req.await {
+                            Ok(resp)
+                                if resp.status().is_success()
+                                    || resp.status() == reqwest::StatusCode::PARTIAL_CONTENT =>
+                            {
+                                Some((idx, u))
+                            }
+                            _ => None,
+                        }
+                    }
+                }
+            });
+        }
+
+        while let Some(res) = tasks.next().await {
+            if let Some(hit) = res {
+                return Some(hit);
+            }
+        }
+
+        None
+    }
 }
 
 #[cfg(test)]
@@ -142,5 +194,16 @@ mod tests {
 
         let direct_urls = MirrorConfig::resolve_mirror_urls(raw, Some("direct"));
         assert_eq!(direct_urls, vec![raw.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_probe_fastest_empty_or_single() {
+        let client = reqwest::Client::new();
+        assert_eq!(MirrorConfig::probe_fastest(&client, &[]).await, None);
+        let single = vec!["https://example.com/single".to_string()];
+        assert_eq!(
+            MirrorConfig::probe_fastest(&client, &single).await,
+            Some((0, "https://example.com/single".to_string()))
+        );
     }
 }
