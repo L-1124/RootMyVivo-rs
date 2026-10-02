@@ -297,23 +297,39 @@ impl Transport for AdbCliTransport {
         }
 
         // 3. 等待 Android 框架系统完全启动 (sys.boot_completed == 1)
+        let mut boot_completed = false;
         while start.elapsed() < timeout_dur {
             tokio::time::sleep(Duration::from_secs(2)).await;
             if let Ok((code, out)) = self.exec("getprop sys.boot_completed").await {
                 if code == 0 && out.trim() == "1" {
+                    boot_completed = true;
                     break;
                 }
             }
         }
+        if !boot_completed {
+            return Err(RmvError::Adb {
+                message: t!("error.reboot_timeout", seconds = timeout_sec.to_string()).to_string(),
+                code: None,
+            });
+        }
 
         // 4. 等待包管理器与系统服务就绪 (pm path android)
+        let mut framework_ready = false;
         while start.elapsed() < timeout_dur {
             tokio::time::sleep(Duration::from_secs(1)).await;
             if let Ok((code, out)) = self.exec("pm path android 2>/dev/null").await {
                 if code == 0 && out.contains("package:") {
+                    framework_ready = true;
                     break;
                 }
             }
+        }
+        if !framework_ready {
+            return Err(RmvError::Adb {
+                message: t!("error.reboot_timeout", seconds = timeout_sec.to_string()).to_string(),
+                code: None,
+            });
         }
 
         // 5. 静默等待 5 秒
