@@ -81,6 +81,45 @@ impl KsuOrchestrator {
         Ok(out.to_lowercase().contains("kernelsu"))
     }
 
+    pub async fn is_ksu_functional<T: Transport>(transport: &T) -> Result<bool> {
+        let cmd = "sh -c 'if [ -x /system/bin/su ]; then /system/bin/su -c id 2>/dev/null; elif command -v su >/dev/null 2>&1; then su -c id 2>/dev/null; else exit 1; fi'";
+        let (code, out) = transport.exec(cmd).await?;
+        Ok(code == 0 && out.contains("uid=0") && out.contains("context=u:r:ksu"))
+    }
+
+    pub async fn ensure_data_adb_dir<T: Transport>(transport: &T) -> Result<()> {
+        let cmd = r#"sh -c '
+            MKDIR_CMD="mkdir -p /data/adb && chmod 700 /data/adb && chown root:root /data/adb"
+            if [ -x /system/bin/su ]; then
+                /system/bin/su -c "$MKDIR_CMD" 2>/dev/null
+            elif [ -x /data/local/tmp/rmv/su ]; then
+                RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c "$MKDIR_CMD" 2>/dev/null
+            elif [ -x /data/local/tmp/su ]; then
+                /data/local/tmp/su -c "$MKDIR_CMD" 2>/dev/null
+            elif [ -x /apex/com.android.virt/bin/su ]; then
+                /apex/com.android.virt/bin/su -c "$MKDIR_CMD" 2>/dev/null
+            else
+                su -c "$MKDIR_CMD" 2>/dev/null
+            fi
+        '"#;
+        let _ = transport.exec(cmd).await;
+        Ok(())
+    }
+
+    pub async fn enable_su_compat<T: Transport>(transport: &T) -> Result<bool> {
+        let cmd = r#"sh -c '
+            SET_CMD="if [ -x /data/adb/ksud ]; then /data/adb/ksud feature set su_compat 1; elif [ -x /data/adb/ksu/bin/ksud ]; then /data/adb/ksu/bin/ksud feature set su_compat 1; elif [ -x /data/local/tmp/rmv/ksud ]; then /data/local/tmp/rmv/ksud feature set su_compat 1; elif command -v ksud >/dev/null 2>&1; then ksud feature set su_compat 1; fi"
+            if [ -x /system/bin/su ]; then
+                /system/bin/su -c "$SET_CMD" 2>/dev/null
+            elif command -v su >/dev/null 2>&1; then
+                su -c "$SET_CMD" 2>/dev/null
+            elif [ -x /data/local/tmp/rmv/su ]; then
+                RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c "$SET_CMD" 2>/dev/null
+            fi
+        '"#;
+        let _ = transport.exec(cmd).await;
+        Ok(Self::is_ksu_functional(transport).await.unwrap_or(false))
+    }
     pub async fn list_modules<T: Transport>(transport: &T) -> Result<Vec<String>> {
         if !Self::is_module_loaded(transport).await.unwrap_or(false) {
             return Ok(Vec::new());
@@ -125,13 +164,13 @@ impl KsuOrchestrator {
 
         let _ = transport.exec(&format!("mkdir -p {}", work_dir)).await?;
 
-        let (check_code, _) = transport
+        let (check_code, check_out) = transport
             .exec(&format!(
                 "test -x {} && {} --version",
                 default_ksud, default_ksud
             ))
             .await?;
-        if check_code == 0 {
+        if check_code == 0 && check_out.contains("ksud") {
             return Ok(default_ksud.to_string());
         }
 
@@ -152,14 +191,7 @@ impl KsuOrchestrator {
 
         for pkg in candidates {
             let script = format!(
-                r#"
-                APK=$(pm path {} 2>/dev/null | head -n 1 | cut -d: -f2)
-                if [ -n "$APK" ] && [ -f "$APK" ]; then
-                    unzip -p "$APK" lib/arm64-v8a/libksud.so > {} 2>/dev/null
-                    chmod 755 {}
-                    test -x {} && echo "KSUD_OK"
-                fi
-                "#,
+                "APK=$(pm path {} 2>/dev/null | head -n 1 | cut -d: -f2); if [ -n \"$APK\" ] && [ -f \"$APK\" ]; then unzip -p \"$APK\" lib/arm64-v8a/libksud.so > {} 2>/dev/null; chmod 755 {}; test -x {} && echo \"KSUD_OK\"; fi",
                 pkg, default_ksud, default_ksud, default_ksud
             );
 
@@ -196,11 +228,15 @@ impl KsuOrchestrator {
         custom_ksud: Option<&str>,
         host_manager_apk: Option<&Path>,
     ) -> Result<()> {
-        if Self::is_module_loaded(transport).await.unwrap_or(false) {
+        if Self::is_module_loaded(transport).await.unwrap_or(false)
+            && Self::is_ksu_functional(transport).await.unwrap_or(false)
+        {
             return Ok(());
         }
 
         let _ = Self::wait_for_framework_ready(transport, 30).await;
+
+        let _ = Self::ensure_data_adb_dir(transport).await;
 
         let ksud = if let Some(path) = custom_ksud {
             path.to_string()
@@ -214,27 +250,50 @@ impl KsuOrchestrator {
                 [ -e /data/local/tmp/rmv/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf /data/local/tmp/rmv/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null
                 [ -e /data/local/tmp/rmv/su ] && [ ! -e /data/local/tmp/su ] && ln -sf /data/local/tmp/rmv/su /data/local/tmp/su 2>/dev/null
 
-                if [ -x /data/local/tmp/rmv/su ]; then
-                    RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c "{} late-load --allow-shell --package-name {}"
+                RUN_CMD="{} late-load --allow-shell --package-name {}"
+                if [ -x /system/bin/su ]; then
+                    /system/bin/su -c "$RUN_CMD"
+                elif [ -x /data/local/tmp/rmv/su ]; then
+                    RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c "$RUN_CMD"
                 elif [ -x /data/local/tmp/su ]; then
-                    /data/local/tmp/su -c "{} late-load --allow-shell --package-name {}"
+                    /data/local/tmp/su -c "$RUN_CMD"
                 elif [ -x /apex/com.android.virt/bin/su ]; then
-                    /apex/com.android.virt/bin/su -c "{} late-load --allow-shell --package-name {}"
-                elif [ -x /system/bin/su ]; then
-                    /system/bin/su -c "{} late-load --allow-shell --package-name {}"
+                    /apex/com.android.virt/bin/su -c "$RUN_CMD"
                 else
-                    su -c "{} late-load --allow-shell --package-name {}"
+                    su -c "$RUN_CMD"
                 fi
+                echo "__RMV_RC=$?"
             '"#,
-            ksud, pkg, ksud, pkg, ksud, pkg, ksud, pkg, ksud, pkg
+            ksud, pkg
         );
-        let (code, out) = transport.exec(&cmd).await?;
-        if code != 0 && !out.contains("already loaded") {
+        let (raw_code, raw_out) = transport.exec(&cmd).await?;
+
+        let (real_code, out) = if let Some(pos) = raw_out.rfind("__RMV_RC=") {
+            let rc_str = raw_out[pos + 9..].trim();
+            let parsed_rc = rc_str
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .parse::<i32>()
+                .unwrap_or(raw_code);
+            let cleaned = raw_out[..pos].trim().to_string();
+            (parsed_rc, cleaned)
+        } else {
+            (raw_code, raw_out.trim().to_string())
+        };
+
+        if (real_code != 0
+            || out.contains("Error: Failed to install ksud")
+            || out.contains("inaccessible or not found"))
+            && !out.contains("already loaded")
+            && !Self::is_module_loaded(transport).await.unwrap_or(false)
+        {
             return Err(RmvError::KsuFailed(
                 t!(
                     "error.late_load_failed",
-                    code = code.to_string(),
-                    error = out.trim()
+                    code = real_code.to_string(),
+                    error = out
                 )
                 .to_string(),
             ));
@@ -250,10 +309,10 @@ impl KsuOrchestrator {
         }
 
         if !loaded {
-            let out_info = if out.trim().is_empty() {
+            let out_info = if out.is_empty() {
                 "none".to_string()
             } else {
-                out.trim().to_string()
+                out
             };
             return Err(RmvError::KsuFailed(format!(
                 "{} (late-load output: {})",
@@ -261,6 +320,9 @@ impl KsuOrchestrator {
                 out_info
             )));
         }
+
+        let _ = Self::enable_su_compat(transport).await;
+
         Ok(())
     }
 }

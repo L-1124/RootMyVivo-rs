@@ -112,18 +112,25 @@ impl ExploitEngine {
                     true,
                     msg.clone(),
                 ),
-                Err(e) => (
-                    "-".to_string(),
-                    "-".to_string(),
-                    "-".to_string(),
-                    options
-                        .custom_payload
-                        .as_ref()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "-".to_string()),
-                    false,
-                    e.to_string(),
-                ),
+                Err(e) => {
+                    let (m, c, k) = if let Ok(d) = transport.get_device_info().await {
+                        (d.model, d.device, d.kernel_full)
+                    } else {
+                        ("-".to_string(), "-".to_string(), "-".to_string())
+                    };
+                    (
+                        m,
+                        c,
+                        k,
+                        options
+                            .custom_payload
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        false,
+                        e.to_string(),
+                    )
+                }
             };
 
             let record = RunRecord {
@@ -543,7 +550,18 @@ impl ExploitEngine {
 
             if !is_rooted {
                 let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
-                // 失败路径必须终止后台载荷并清理残留，避免内核污染与文件残留
+                // 失败路径前先拉取真实设备日志保全至 host history，避免 clean 后证据销毁
+                if let Ok((_, log_content)) = transport
+                    .exec("cat /data/local/tmp/rmv/live.log 2>/dev/null")
+                    .await
+                {
+                    for line in log_content.lines() {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() {
+                            append_captured_log(captured_logs, trimmed);
+                        }
+                    }
+                }
                 let _ = transport
                     .exec("pkill -9 -x true 2>/dev/null; pkill -f preload.so 2>/dev/null")
                     .await;
@@ -600,7 +618,10 @@ impl ExploitEngine {
             let is_ksu_live = KsuOrchestrator::is_module_loaded(transport)
                 .await
                 .unwrap_or(false);
-            if is_ksu_live {
+            let is_ksu_functional = KsuOrchestrator::is_ksu_functional(transport)
+                .await
+                .unwrap_or(false);
+            if is_ksu_live && is_ksu_functional {
                 let _ = event_tx.send(EngineEvent::Step {
                     phase: Phase::Ksu,
                     index: ksu_step,
@@ -707,13 +728,21 @@ impl ExploitEngine {
                     }
                 }
 
-                KsuOrchestrator::late_load(
+                if let Err(e) = KsuOrchestrator::late_load(
                     transport,
                     options.ksu_variant,
                     None,
                     host_apk.as_deref(),
                 )
-                .await?;
+                .await
+                {
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Error,
+                        line: e.to_string(),
+                    });
+                    let _ = Persistence::prune_empty_data_adb(transport).await;
+                    return Err(e);
+                }
                 let _ = event_tx.send(EngineEvent::Log {
                     level: LogLevel::Ok,
                     line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),

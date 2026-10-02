@@ -81,4 +81,24 @@ impl Persistence {
         }
         Ok(CleanOutcome::ShellOnly)
     }
+
+    /// 当提权或 late-load 失败时，如果 /data/adb 为空目录，则安全删除，
+    /// 避免在非 root 设备物理分区遗留空目录导致银行或安全检测误报。
+    /// rmdir 具备天然安全性：若包含模块或文件则拒绝删除 (ENOTEMPTY)。
+    pub async fn prune_empty_data_adb<T: Transport>(transport: &T) -> Result<()> {
+        let prune_cmd = r#"sh -c '
+            PRUNE_SCRIPT="rmdir /data/adb 2>/dev/null; true"
+            if [ -x /system/bin/su ]; then
+                /system/bin/su -c "$PRUNE_SCRIPT" 2>/dev/null
+            elif [ -x /data/local/tmp/rmv/su ]; then
+                RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c "$PRUNE_SCRIPT" 2>/dev/null
+            elif [ -x /data/local/tmp/su ]; then
+                /data/local/tmp/su -c "$PRUNE_SCRIPT" 2>/dev/null
+            else
+                su -c "$PRUNE_SCRIPT" 2>/dev/null
+            fi
+        '"#;
+        let _ = transport.exec(prune_cmd).await;
+        Ok(())
+    }
 }
