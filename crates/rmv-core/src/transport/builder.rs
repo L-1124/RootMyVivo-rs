@@ -141,4 +141,31 @@ impl TransportBuilder {
         }
         Ok(results)
     }
+
+    pub async fn resolve_all(mode: TransportMode) -> Result<Vec<(String, Arc<dyn Transport>)>> {
+        let online = Self::list_online_devices(mode).await?;
+        if online.is_empty() {
+            return Err(RmvError::DeviceNotFound(
+                t!("error.device_not_found").to_string(),
+            ));
+        }
+
+        let mut transports = Vec::with_capacity(online.len());
+        for (serial, _) in online {
+            match Self::resolve(Some(serial.clone()), mode).await {
+                Ok(t) => transports.push((serial, t)),
+                Err(e) => {
+                    tracing::warn!("Failed to resolve transport for device {}: {}", serial, e);
+                }
+            }
+        }
+
+        if transports.is_empty() {
+            return Err(RmvError::DeviceNotFound(
+                t!("error.device_not_found").to_string(),
+            ));
+        }
+
+        Ok(transports)
+    }
 }

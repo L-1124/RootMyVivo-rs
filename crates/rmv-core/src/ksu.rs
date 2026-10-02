@@ -80,6 +80,23 @@ impl KsuOrchestrator {
         let (_, out) = transport.exec(cmd).await?;
         Ok(out.to_lowercase().contains("kernelsu"))
     }
+
+    pub async fn list_modules<T: Transport>(transport: &T) -> Result<Vec<String>> {
+        if !Self::is_module_loaded(transport).await.unwrap_or(false) {
+            return Ok(Vec::new());
+        }
+
+        let cmd = "sh -c 'if [ -x /system/bin/su ]; then /system/bin/su -c \"ls -1 /data/adb/modules 2>/dev/null\"; elif [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c \"ls -1 /data/adb/modules 2>/dev/null\"; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c \"ls -1 /data/adb/modules 2>/dev/null\"; else ls -1 /data/adb/modules 2>/dev/null; fi'";
+        let (_, out) = transport.exec(cmd).await?;
+        let modules: Vec<String> = out
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| {
+                !s.is_empty() && !s.contains("No such file") && !s.contains("Permission denied")
+            })
+            .collect();
+        Ok(modules)
+    }
     pub async fn wait_for_framework_ready<T: Transport>(
         transport: &T,
         timeout_sec: u64,
