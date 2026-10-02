@@ -60,6 +60,16 @@ impl CliUi {
                 downloaded,
                 total,
             } => {
+                // 新文件或总量变化时重置进度条，避免复用残留实例
+                if self.download_bar.is_some() {
+                    if let Some(pb) = &self.download_bar {
+                        if pb.length() != Some(total) {
+                            pb.finish_and_clear();
+                            self.download_bar = None;
+                        }
+                    }
+                }
+
                 if self.download_bar.is_none() {
                     let pb = ProgressBar::new(total);
                     pb.set_style(
@@ -104,14 +114,26 @@ impl CliUi {
             EngineEvent::Status(status) => match status {
                 EngineStatus::Success => {
                     self.spinner.finish_and_clear();
+                    if let Some(pb) = &self.download_bar {
+                        pb.finish_and_clear();
+                    }
+                    self.download_bar = None;
                 }
                 EngineStatus::Failed => {
                     self.spinner.finish_and_clear();
+                    if let Some(pb) = &self.download_bar {
+                        pb.finish_and_clear();
+                    }
+                    self.download_bar = None;
                 }
                 _ => {}
             },
             EngineEvent::Completed { success, message } => {
                 self.spinner.finish_and_clear();
+                if let Some(pb) = &self.download_bar {
+                    pb.finish_and_clear();
+                }
+                self.download_bar = None;
                 if success {
                     println!("{} {}", "[ ok ]".green().bold(), message.green().bold());
                 } else {
