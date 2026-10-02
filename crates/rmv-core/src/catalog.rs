@@ -17,6 +17,14 @@ pub const DEFAULT_CATALOG_URL: &str =
 pub const JSDELIVR_CATALOG_URL: &str =
     "https://cdn.jsdelivr.net/gh/zenyxx-xd/RootMyVivo-Payloads@main/catalog/devices.json";
 
+pub const CATALOG_CACHE_MAX_AGE_SECS: u64 = 7 * 24 * 3600;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CatalogCacheMeta {
+    pub url: String,
+    pub fetched_at: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CatalogUrlSource {
     CliOverride,
@@ -133,9 +141,72 @@ pub struct CatalogV5 {
     pub schema_version: u32,
     pub builds: HashMap<String, KernelBuild>,
     pub devices: Vec<DeviceEntry>,
+    #[serde(skip)]
+    pub cached_meta: Option<CatalogCacheMeta>,
 }
 
 impl CatalogV5 {
+    pub fn cache_dir() -> PathBuf {
+        let base = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(base).join(".rmv").join("cache")
+    }
+
+    pub fn cache_file() -> PathBuf {
+        Self::cache_dir().join("catalog.json")
+    }
+
+    pub fn cache_meta_file() -> PathBuf {
+        Self::cache_dir().join("catalog.json.meta")
+    }
+
+    pub fn is_fresh(fetched_at: u64, max_age_secs: u64) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        now.saturating_sub(fetched_at) < max_age_secs
+    }
+
+    pub async fn load_cached() -> Option<(CatalogV5, CatalogCacheMeta)> {
+        let cache_file = Self::cache_file();
+        let meta_file = Self::cache_meta_file();
+
+        let json_bytes = tokio::fs::read(&cache_file).await.ok()?;
+        let mut cat: CatalogV5 = serde_json::from_slice(&json_bytes).ok()?;
+
+        let meta_bytes = tokio::fs::read(&meta_file).await.ok()?;
+        let meta: CatalogCacheMeta = serde_json::from_slice(&meta_bytes).ok()?;
+
+        cat.cached_meta = Some(meta.clone());
+        Some((cat, meta))
+    }
+
+    pub async fn save_cached(catalog: &CatalogV5, url: &str) {
+        let dir = Self::cache_dir();
+        if tokio::fs::create_dir_all(&dir).await.is_err() {
+            return;
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let meta = CatalogCacheMeta {
+            url: url.to_string(),
+            fetched_at: now,
+        };
+
+        if let Ok(json) = serde_json::to_vec_pretty(catalog) {
+            let _ = tokio::fs::write(Self::cache_file(), json).await;
+        }
+        if let Ok(meta_json) = serde_json::to_vec_pretty(&meta) {
+            let _ = tokio::fs::write(Self::cache_meta_file(), meta_json).await;
+        }
+    }
+
     pub async fn fetch_default_with_url(custom_url: Option<&str>) -> Result<Self> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -162,13 +233,22 @@ impl CatalogV5 {
                 Ok(resp) => {
                     if resp.status().is_success() {
                         match resp.json::<CatalogV5>().await {
-                            Ok(cat) => return Ok(cat),
+                            Ok(cat) => {
+                                if source == CatalogUrlSource::Default {
+                                    Self::save_cached(&cat, url).await;
+                                }
+                                return Ok(cat);
+                            }
                             Err(e) => last_err = Some(RmvError::Http(e)),
                         }
                     }
                 }
                 Err(e) => last_err = Some(RmvError::Http(e)),
             }
+        }
+
+        if let Some((cat, _meta)) = Self::load_cached().await {
+            return Ok(cat);
         }
 
         Err(last_err.unwrap_or_else(|| {
@@ -380,5 +460,29 @@ mod tests {
             assert_eq!(def_url, DEFAULT_CATALOG_URL);
             assert_eq!(def_src, CatalogUrlSource::Default);
         }
+    }
+
+    #[test]
+    fn test_catalog_cache_meta_and_freshness() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        assert!(CatalogV5::is_fresh(now, 60));
+        assert!(CatalogV5::is_fresh(now - 100, 200));
+        assert!(!CatalogV5::is_fresh(now - 300, 200));
+        assert!(!CatalogV5::is_fresh(
+            now - (CATALOG_CACHE_MAX_AGE_SECS + 10),
+            CATALOG_CACHE_MAX_AGE_SECS
+        ));
+
+        let meta = CatalogCacheMeta {
+            url: "https://example.com/devices.json".to_string(),
+            fetched_at: now,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let parsed: CatalogCacheMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, meta);
     }
 }

@@ -14,7 +14,10 @@ pub mod mirror;
 pub mod persistence;
 pub mod transport;
 
-pub use catalog::{CatalogConfig, CatalogUrlSource, CatalogV5, KernelBuild, PayloadFile};
+pub use catalog::{
+    CatalogCacheMeta, CatalogConfig, CatalogUrlSource, CatalogV5, KernelBuild, PayloadFile,
+    CATALOG_CACHE_MAX_AGE_SECS,
+};
 pub use device::{
     check_root_status, parse_root_probe, DeviceInfo, GateStatus, RootStatus, ROOT_PROBE_CMD,
 };

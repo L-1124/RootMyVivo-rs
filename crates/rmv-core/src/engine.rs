@@ -40,6 +40,8 @@ pub struct EngineOptions {
     pub install_manager: bool,
     /// 提权等待窗口（秒）。CFI 探测最多 24 次且带随机延迟，窗口需覆盖整个探测期。
     pub timeout_secs: u64,
+    /// 提权与 KernelSU 加载成功后是否自动触发系统软重启 (ksud soft-reboot)
+    pub soft_reboot: bool,
 }
 
 impl Default for EngineOptions {
@@ -61,6 +63,7 @@ impl Default for EngineOptions {
             manager_version: None,
             install_manager: true,
             timeout_secs: 900,
+            soft_reboot: false,
         }
     }
 }
@@ -233,6 +236,21 @@ impl ExploitEngine {
             let catalog =
                 CatalogV5::fetch_with_url(&self.client, options.custom_catalog_url.as_deref())
                     .await?;
+
+            if let Some(meta) = &catalog.cached_meta {
+                if CatalogV5::is_fresh(meta.fetched_at, crate::catalog::CATALOG_CACHE_MAX_AGE_SECS)
+                {
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Info,
+                        line: t!("log.catalog_cache_used", url = meta.url.clone()).to_string(),
+                    });
+                } else {
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Warn,
+                        line: t!("log.catalog_cache_expired", url = meta.url.clone()).to_string(),
+                    });
+                }
+            }
             let (_device_entry, kernel_build) =
                 catalog
                     .match_payload(&device)
@@ -703,6 +721,27 @@ impl ExploitEngine {
             }
         }
 
+        if options.soft_reboot {
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Info,
+                line: t!("log.soft_reboot_pending").to_string(),
+            });
+            let soft_reboot_cmd = "if [ -x /data/adb/ksu/bin/ksud ]; then /data/adb/ksu/bin/ksud soft-reboot; elif [ -x /data/local/tmp/rmv/ksud ]; then /data/local/tmp/rmv/ksud soft-reboot; else setprop ctl.restart zygote; fi";
+            let _ = transport
+                .exec(&format!(
+                    "/system/bin/su -c '{}' 2>/dev/null",
+                    soft_reboot_cmd
+                ))
+                .await;
+
+            let success_msg = t!("log.finished").to_string();
+            let _ = event_tx.send(EngineEvent::Status(EngineStatus::Success));
+            let _ = event_tx.send(EngineEvent::Completed {
+                success: true,
+                message: success_msg.clone(),
+            });
+            return Ok((device, payload_local_path, success_msg));
+        }
         // 清理设备端临时痕迹
         let _ = Persistence::clean_traces(transport).await;
 
