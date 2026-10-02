@@ -157,7 +157,7 @@ impl KsuOrchestrator {
         transport: &T,
         variant: KsuVariant,
         host_manager_apk: Option<&Path>,
-    ) -> Result<String> {
+    ) -> Result<(String, String)> {
         // ksud 与载荷同置于 /data/local/tmp/rmv，便于 `rmv clean` 一次性清掉
         let work_dir = "/data/local/tmp/rmv";
         let default_ksud = "/data/local/tmp/rmv/ksud";
@@ -171,36 +171,22 @@ impl KsuOrchestrator {
             ))
             .await?;
         if check_code == 0 && check_out.contains("ksud") {
-            return Ok(default_ksud.to_string());
+            return Ok((default_ksud.to_string(), variant.package_name().to_string()));
         }
 
         let primary_pkg = variant.package_name();
-        let mut candidates = vec![primary_pkg];
 
-        let all_known = [
-            "com.rifsxd.ksunext",
-            "com.sukisu.ultra",
-            "me.weishu.kernelsu",
-            "com.resukisu.resukisu",
-        ];
-        for k in all_known {
-            if k != primary_pkg {
-                candidates.push(k);
-            }
+        // 1. 首选：从设备上已安装的用户指定变种 APK 中提取
+        let script = format!(
+            "APK=$(pm path {} 2>/dev/null | head -n 1 | cut -d: -f2); if [ -n \"$APK\" ] && [ -f \"$APK\" ]; then unzip -p \"$APK\" lib/arm64-v8a/libksud.so > {} 2>/dev/null; chmod 755 {}; test -x {} && echo \"KSUD_OK\"; fi",
+            primary_pkg, default_ksud, default_ksud, default_ksud
+        );
+        let (code, out) = transport.exec(&script).await?;
+        if code == 0 && out.contains("KSUD_OK") {
+            return Ok((default_ksud.to_string(), primary_pkg.to_string()));
         }
 
-        for pkg in candidates {
-            let script = format!(
-                "APK=$(pm path {} 2>/dev/null | head -n 1 | cut -d: -f2); if [ -n \"$APK\" ] && [ -f \"$APK\" ]; then unzip -p \"$APK\" lib/arm64-v8a/libksud.so > {} 2>/dev/null; chmod 755 {}; test -x {} && echo \"KSUD_OK\"; fi",
-                pkg, default_ksud, default_ksud, default_ksud
-            );
-
-            let (code, out) = transport.exec(&script).await?;
-            if code == 0 && out.contains("KSUD_OK") {
-                return Ok(default_ksud.to_string());
-            }
-        }
-
+        // 2. 次选：从 PC 传入或由 GitHub 下载的用户指定变种 APK 中提取
         if let Some(apk_path) = host_manager_apk {
             if apk_path.exists() {
                 let remote_apk = "/data/local/tmp/rmv/manager_temp.apk";
@@ -211,8 +197,28 @@ impl KsuOrchestrator {
                     );
                     let (code, out) = transport.exec(&extract_script).await?;
                     if code == 0 && out.contains("KSUD_OK") {
-                        return Ok(default_ksud.to_string());
+                        return Ok((default_ksud.to_string(), primary_pkg.to_string()));
                     }
+                }
+            }
+        }
+
+        // 3. 保底：指定变种在设备与本地均无，作为最后回退扫描设备其他已安装变种
+        let fallback_candidates = [
+            "com.rifsxd.ksunext",
+            "com.sukisu.ultra",
+            "me.weishu.kernelsu",
+            "com.resukisu.resukisu",
+        ];
+        for pkg in fallback_candidates {
+            if pkg != primary_pkg {
+                let script = format!(
+                    "APK=$(pm path {} 2>/dev/null | head -n 1 | cut -d: -f2); if [ -n \"$APK\" ] && [ -f \"$APK\" ]; then unzip -p \"$APK\" lib/arm64-v8a/libksud.so > {} 2>/dev/null; chmod 755 {}; test -x {} && echo \"KSUD_OK\"; fi",
+                    pkg, default_ksud, default_ksud, default_ksud
+                );
+                let (code, out) = transport.exec(&script).await?;
+                if code == 0 && out.contains("KSUD_OK") {
+                    return Ok((default_ksud.to_string(), pkg.to_string()));
                 }
             }
         }
@@ -238,12 +244,11 @@ impl KsuOrchestrator {
 
         let _ = Self::ensure_data_adb_dir(transport).await;
 
-        let ksud = if let Some(path) = custom_ksud {
-            path.to_string()
+        let (ksud, pkg) = if let Some(path) = custom_ksud {
+            (path.to_string(), variant.package_name().to_string())
         } else {
             Self::ensure_ksud_deployed(transport, variant, host_manager_apk).await?
         };
-        let pkg = variant.package_name();
 
         let cmd = format!(
             r#"sh -c '

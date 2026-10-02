@@ -85,6 +85,8 @@
     "manager_download_ok": "管理器下载完成: %{name} -> %{path}",
     "manager_auto_download": "未检测到本地或已安装的管理器，正在自动下载 %{name}...",
     "manager_installing": "正在向设备安装 %{name} 管理器 APK...",
+    "manager_screen_locked": "检测到手机处于锁屏或息屏状态。vivo / OriginOS 在锁屏状态下会默认直接拒绝安装，请先点亮并解锁手机屏幕！",
+    "manager_install_prompt": "安装前提示：若手机弹出应用安装安全验证或权限确认，请在手机屏幕上点击「允许」...",
     "manager_install_ok": "管理器 %{name} 安装完成。"
   },
   "cli": {

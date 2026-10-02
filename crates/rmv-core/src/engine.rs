@@ -687,6 +687,37 @@ impl ExploitEngine {
                                 )
                                 .to_string(),
                             });
+
+                            // 检测是否处于锁屏或息屏状态（vivo/OriginOS 锁屏下会直接拒绝 USB 安装）
+                            let lock_check_cmd = "sh -c 'dumpsys power 2>/dev/null | grep -iE \"mWakefulness=(Asleep|Dozing)\"; dumpsys window 2>/dev/null | grep -iE \"(mShowing=true|isStatusBarKeyguard=true|mDreamingLockscreen=true)\"; dumpsys trust 2>/dev/null | grep -i \"device is locked: true\"'";
+                            let is_locked =
+                                if let Ok((_, out)) = transport.exec(lock_check_cmd).await {
+                                    !out.trim().is_empty()
+                                } else {
+                                    false
+                                };
+
+                            if is_locked {
+                                let _ = event_tx.send(EngineEvent::Log {
+                                    level: LogLevel::Warn,
+                                    line: t!("log.manager_screen_locked").to_string(),
+                                });
+                                let unlock_deadline = std::time::Instant::now();
+                                while unlock_deadline.elapsed() < Duration::from_secs(12) {
+                                    sleep(Duration::from_secs(2)).await;
+                                    if let Ok((_, out)) = transport.exec(lock_check_cmd).await {
+                                        if out.trim().is_empty() {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            let _ = event_tx.send(EngineEvent::Log {
+                                level: LogLevel::Info,
+                                line: t!("log.manager_install_prompt").to_string(),
+                            });
+
                             let remote_install_apk = "/data/local/tmp/rmv/manager_install.apk";
                             if transport.push(apk_path, remote_install_apk).await.is_ok() {
                                 // Root 环境执行安装以规避 OEM 限制
