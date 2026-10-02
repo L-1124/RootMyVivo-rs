@@ -52,6 +52,8 @@ impl Persistence {
         // 2. 尝试临时 su 客户端或 /system/bin/su 执行 root 清理
         let temp_su_clean_cmd = format!(
             r#"sh -c '
+                [ -e /data/local/tmp/rmv/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf /data/local/tmp/rmv/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null
+                [ -e /data/local/tmp/rmv/su ] && [ ! -e /data/local/tmp/su ] && ln -sf /data/local/tmp/rmv/su /data/local/tmp/su 2>/dev/null
                 if [ -x /data/local/tmp/rmv/su ]; then
                     RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c "{}" 2>/dev/null
                 elif [ -x /data/local/tmp/su ]; then
