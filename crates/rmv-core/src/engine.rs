@@ -405,7 +405,7 @@ impl ExploitEngine {
             let mut last_attempt: Option<u32> = None;
             let attempt_re = regex::Regex::new(r"rmv exploit attempt (\d+)/(\d+)")
                 .expect("static attempt pattern");
-            let mut payload_alive = false;
+            let mut payload_alive;
             let mut boot_poisoned = false;
             let mut attempts_exhausted = false;
             let mut process_exited = false;
@@ -558,16 +558,6 @@ impl ExploitEngine {
                     return Err(RmvError::ExploitFailed(err_msg));
                 }
 
-                if payload_alive {
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Warn,
-                        line: t!(
-                            "log.exploit_still_running",
-                            secs = timeout_limit.to_string()
-                        )
-                        .to_string(),
-                    });
-                }
                 return Err(RmvError::ExploitTimeout {
                     last_attempt,
                     log_tail: last_log_tail,
