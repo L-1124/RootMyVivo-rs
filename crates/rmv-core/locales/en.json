@@ -138,6 +138,8 @@
     "gate_blocked_badge": "Unsupported",
     "gate_unsupported_desc": "(Kernel %{version} is not vulnerable)",
     "catalog_fetching": "Fetching remote catalog...",
+    "catalog_list_about": "List all supported device models and kernels in the catalog",
+    "catalog_devices_title": "Catalog Supported Devices (%{count} models):",
     "catalog_show_about": "Show active catalog configuration and remote URL",
     "catalog_set_about": "Configure and save custom remote catalog URL",
     "catalog_reset_about": "Reset to official default catalog URL",

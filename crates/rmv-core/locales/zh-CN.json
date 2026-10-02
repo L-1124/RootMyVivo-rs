@@ -138,6 +138,8 @@
     "gate_blocked_badge": "不支持",
     "gate_unsupported_desc": "(内核 %{version} 不在支持范围)",
     "catalog_fetching": "正在获取载荷编目...",
+    "catalog_list_about": "列出当前载荷编目收录的所有支持机型与内核",
+    "catalog_devices_title": "编目支持机型列表 (%{count} 款):",
     "catalog_show_about": "显示当前生效的编目配置与远程地址",
     "catalog_set_about": "配置自定义远程编目 URL (保存至本地)",
     "catalog_reset_about": "重置为官方默认编目 URL",

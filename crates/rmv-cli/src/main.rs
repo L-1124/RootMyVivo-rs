@@ -134,6 +134,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum CatalogAction {
+    List,
     Show,
     Set {
         #[arg(value_name = "URL")]
@@ -224,6 +225,9 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
             sc.about(t!("cli.catalog_about").to_string())
                 .mut_arg("catalog_url", |a| {
                     a.help(t!("cli.arg_catalog_url").to_string())
+                })
+                .mut_subcommand("list", |s| {
+                    s.about(t!("cli.catalog_list_about").to_string())
                 })
                 .mut_subcommand("show", |s| {
                     s.about(t!("cli.catalog_show_about").to_string())
@@ -382,7 +386,9 @@ async fn main() {
             Some(CatalogAction::Show) => commands::run_catalog_show().await,
             Some(CatalogAction::Set { url }) => commands::run_catalog_set(&url).await,
             Some(CatalogAction::Reset) => commands::run_catalog_reset().await,
-            None => commands::run_catalog(cli.serial, catalog_url, transport_mode).await,
+            Some(CatalogAction::List) | None => {
+                commands::run_catalog(cli.serial, catalog_url, transport_mode).await
+            }
         },
         Commands::Run {
             payload,

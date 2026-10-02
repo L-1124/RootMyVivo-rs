@@ -260,8 +260,7 @@ pub async fn run_catalog(
     mode: TransportMode,
 ) -> Result<()> {
     println!("{}", t!("cli.catalog_fetching").bold().cyan());
-    let (resolved_url, _) = CatalogConfig::resolve_url(catalog_url.as_deref());
-    let catalog = CatalogV5::fetch_default_with_url(Some(&resolved_url))
+    let catalog = CatalogV5::fetch_default_with_url(catalog_url.as_deref())
         .await
         .context(t!("error.catalog_fetch_failed", message = "network"))?;
     if let Some(meta) = &catalog.cached_meta {
@@ -287,6 +286,60 @@ pub async fn run_catalog(
         )
     );
 
+    println!(
+        "{}",
+        t!(
+            "cli.catalog_devices_title",
+            count = catalog.devices.len().to_string()
+        )
+        .bold()
+        .cyan()
+    );
+    println!("{}", "-".repeat(78).cyan());
+    println!(
+        "  {:<20} {:<10} {:<24} {}",
+        "MARKET NAME".dimmed(),
+        "CODE".dimmed(),
+        "MODELS".dimmed(),
+        "KERNELS".dimmed()
+    );
+    println!("{}", "-".repeat(78).cyan());
+
+    for dev in &catalog.devices {
+        let code = if dev.code.is_empty() { "-" } else { &dev.code };
+        let mut all_models: Vec<String> =
+            dev.models.iter().chain(dev.names.iter()).cloned().collect();
+        all_models.sort();
+        all_models.dedup();
+        all_models.retain(|m| m != &dev.market_name);
+
+        let models_str = if all_models.is_empty() {
+            code.to_string()
+        } else {
+            let joined = all_models.join(", ");
+            if joined.len() > 24 {
+                format!("{}...", &joined[..21])
+            } else {
+                joined
+            }
+        };
+
+        let kernel_builds: Vec<&str> = dev.kernels.iter().map(|k| k.build.as_str()).collect();
+        let kernels_str = if kernel_builds.is_empty() {
+            "-".dimmed().to_string()
+        } else {
+            kernel_builds.join(", ").yellow().to_string()
+        };
+
+        println!(
+            "  {:<20} {:<10} {:<24} {}",
+            dev.market_name.green().bold(),
+            code,
+            models_str,
+            kernels_str
+        );
+    }
+    println!("{}\n", "-".repeat(78).cyan());
     if let Ok(transport) = resolve_transport(serial, mode).await {
         if let Ok(dev) = transport.get_device_info().await {
             println!("{}", t!("cli.matching_device").bold().cyan());
