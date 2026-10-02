@@ -106,16 +106,19 @@ impl TransportBuilder {
         }
 
         let mut server = ADBServer::default();
-        let devices = server.devices().map_err(|e| RmvError::Adb {
-            message: format!("Failed to query devices from ADB server: {}", e),
-            code: None,
-        })?;
-
-        let online: Vec<String> = devices
-            .into_iter()
-            .filter(|d| d.state == adb_client::server::DeviceState::Device)
-            .map(|d| d.identifier)
-            .collect();
+        let server_query = server.devices();
+        let online: Vec<String> = match server_query {
+            Ok(devices) => devices
+                .into_iter()
+                .filter(|d| d.state == adb_client::server::DeviceState::Device)
+                .map(|d| d.identifier)
+                .collect(),
+            // ADB Server 未启动或异常时回退 CLI 子进程（可自动拉起 server）
+            Err(_) => {
+                let cli_devs = AdbCliTransport::list_devices().await.unwrap_or_default();
+                return Ok(cli_devs.into_iter().map(|d| (d.clone(), d)).collect());
+            }
+        };
 
         if online.is_empty() {
             let cli_devs = AdbCliTransport::list_devices().await.unwrap_or_default();
