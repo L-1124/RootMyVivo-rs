@@ -1,12 +1,31 @@
 use colored::*;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rmv_core::{EngineEvent, EngineStatus, LogLevel};
 use rust_i18n::t;
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
+static GLOBAL_JSONL_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn init_global_jsonl(custom_path: Option<PathBuf>) -> &'static PathBuf {
+    GLOBAL_JSONL_PATH.get_or_init(|| {
+        custom_path.unwrap_or_else(|| {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            PathBuf::from(format!("rmv-events-{}.jsonl", ts))
+        })
+    })
+}
 pub struct CliUi {
     spinner: ProgressBar,
     download_bar: Option<ProgressBar>,
     printed_log_lines: std::collections::HashSet<String>,
+    jsonl_path: Option<PathBuf>,
+    tag_prefix: Option<String>,
+    mp: Option<Arc<MultiProgress>>,
 }
 
 impl CliUi {
@@ -22,10 +41,54 @@ impl CliUi {
             spinner,
             download_bar: None,
             printed_log_lines: std::collections::HashSet::new(),
+            jsonl_path: GLOBAL_JSONL_PATH.get().cloned(),
+            tag_prefix: None,
+            mp: None,
         }
     }
 
+    pub fn new_multi(mp: Arc<MultiProgress>, tag_prefix: String) -> Self {
+        let spinner = mp.add(ProgressBar::new_spinner());
+        spinner.set_style(
+            ProgressStyle::default_spinner()
+                .tick_chars("|/-\\")
+                .template("{spinner:.green} {msg}")
+                .unwrap(),
+        );
+        Self {
+            spinner,
+            download_bar: None,
+            printed_log_lines: std::collections::HashSet::new(),
+            jsonl_path: GLOBAL_JSONL_PATH.get().cloned(),
+            tag_prefix: Some(tag_prefix),
+            mp: Some(mp),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_jsonl(mut self, path: PathBuf) -> Self {
+        self.jsonl_path = Some(path);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn set_jsonl(&mut self, path: PathBuf) {
+        self.jsonl_path = Some(path);
+    }
+
     pub fn handle_event(&mut self, event: EngineEvent) {
+        if let Some(path) = &self.jsonl_path {
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                if let Ok(json) = serde_json::to_string(&event) {
+                    let _ = writeln!(file, "{}", json);
+                }
+            }
+        }
+
         match event {
             EngineEvent::Step {
                 phase,
@@ -35,8 +98,12 @@ impl CliUi {
             } => {
                 let tag = format!("[{}/{}]", index, total).bold().cyan();
                 let phase_name = phase.display_name().bold();
-                self.spinner
-                    .set_message(format!("{} {}: {}", tag, phase_name, desc));
+                let msg = if let Some(pref) = &self.tag_prefix {
+                    format!("[{}] {} {}: {}", pref.bold(), tag, phase_name, desc)
+                } else {
+                    format!("{} {}: {}", tag, phase_name, desc)
+                };
+                self.spinner.set_message(msg);
                 self.spinner
                     .enable_steady_tick(std::time::Duration::from_millis(80));
             }
@@ -48,7 +115,16 @@ impl CliUi {
                     LogLevel::Info => "[info]".blue().bold(),
                     LogLevel::Running => "[ .. ]".cyan(),
                 };
-                self.spinner.suspend(|| println!("{} {}", prefix, line));
+                let log_str = if let Some(pref) = &self.tag_prefix {
+                    format!("[{}] {} {}", pref.dimmed(), prefix, line)
+                } else {
+                    format!("{} {}", prefix, line)
+                };
+                if let Some(mp) = &self.mp {
+                    let _ = mp.println(log_str);
+                } else {
+                    self.spinner.suspend(|| println!("{}", log_str));
+                }
             }
             EngineEvent::Progress { text, active } => {
                 if active {
@@ -71,7 +147,11 @@ impl CliUi {
                 }
 
                 if self.download_bar.is_none() {
-                    let pb = ProgressBar::new(total);
+                    let pb = if let Some(mp) = &self.mp {
+                        mp.add(ProgressBar::new(total))
+                    } else {
+                        ProgressBar::new(total)
+                    };
                     pb.set_style(
                         ProgressStyle::default_bar()
                             .template("  {spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta}) {msg}")
@@ -100,9 +180,18 @@ impl CliUi {
                             || trimmed.starts_with("[-]")
                             || trimmed.starts_with("[*]")
                         {
-                            self.spinner.suspend(|| {
-                                println!("  {}", trimmed.dimmed());
-                            });
+                            let live_msg = if let Some(pref) = &self.tag_prefix {
+                                format!("  [{}] {}", pref.dimmed(), trimmed.dimmed())
+                            } else {
+                                format!("  {}", trimmed.dimmed())
+                            };
+                            if let Some(mp) = &self.mp {
+                                let _ = mp.println(live_msg);
+                            } else {
+                                self.spinner.suspend(|| {
+                                    println!("{}", live_msg);
+                                });
+                            }
                         }
                     }
                 }
@@ -134,10 +223,31 @@ impl CliUi {
                     pb.finish_and_clear();
                 }
                 self.download_bar = None;
-                if success {
-                    println!("{} {}", "[ ok ]".green().bold(), message.green().bold());
+                let final_msg = if let Some(pref) = &self.tag_prefix {
+                    format!("[{}] {}", pref.bold(), message)
                 } else {
-                    println!("{} {}", "[fail]".red().bold(), message.red().bold());
+                    message
+                };
+                if let Some(mp) = &self.mp {
+                    if success {
+                        let _ = mp.println(format!(
+                            "{} {}",
+                            "[ ok ]".green().bold(),
+                            final_msg.green().bold()
+                        ));
+                    } else {
+                        let _ = mp.println(format!(
+                            "{} {}",
+                            "[fail]".red().bold(),
+                            final_msg.red().bold()
+                        ));
+                    }
+                } else {
+                    if success {
+                        println!("{} {}", "[ ok ]".green().bold(), final_msg.green().bold());
+                    } else {
+                        println!("{} {}", "[fail]".red().bold(), final_msg.red().bold());
+                    }
                 }
             }
         }

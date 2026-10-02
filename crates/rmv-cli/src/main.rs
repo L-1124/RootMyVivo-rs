@@ -20,6 +20,9 @@ struct Cli {
 
     #[arg(short = 't', long, global = true, default_value = "auto")]
     transport: String,
+
+    #[arg(long, global = true, default_value_t = false)]
+    log_json: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -91,6 +94,17 @@ enum Commands {
 
         #[arg(long, default_value_t = 900)]
         timeout: u64,
+
+        #[arg(
+            long = "all-devices",
+            default_value_t = false,
+            conflicts_with = "payload",
+            conflicts_with = "serial"
+        )]
+        all_devices: bool,
+
+        #[arg(long = "soft-reboot", default_value_t = false)]
+        soft_reboot: bool,
     },
 
     Clean,
@@ -107,6 +121,14 @@ enum Commands {
     History {
         #[command(subcommand)]
         action: Option<HistoryAction>,
+    },
+    Stats {
+        #[arg(long)]
+        limit: Option<usize>,
+    },
+    Diagnose {
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -196,6 +218,7 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
         .mut_arg("serial", |a| a.help(t!("cli.arg_serial").to_string()))
         .mut_arg("lang", |a| a.help(t!("cli.arg_lang").to_string()))
         .mut_arg("transport", |a| a.help(t!("cli.arg_transport").to_string()))
+        .mut_arg("log_json", |a| a.help(t!("cli.arg_log_json").to_string()))
         .mut_subcommand("check", |sc| sc.about(t!("cli.check_about").to_string()))
         .mut_subcommand("catalog", |sc| {
             sc.about(t!("cli.catalog_about").to_string())
@@ -247,6 +270,12 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                     a.help(t!("cli.arg_no_install_manager").to_string())
                 })
                 .mut_arg("timeout", |a| a.help(t!("cli.arg_timeout").to_string()))
+                .mut_arg("all_devices", |a| {
+                    a.help(t!("cli.arg_all_devices").to_string())
+                })
+                .mut_arg("soft_reboot", |a| {
+                    a.help(t!("cli.arg_soft_reboot").to_string())
+                })
         })
         .mut_subcommand("manager", |sc| {
             sc.about(t!("cli.manager_about").to_string())
@@ -293,6 +322,16 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                     s.about(t!("cli.history_clear_about").to_string())
                 })
         })
+        .mut_subcommand("stats", |sc| {
+            sc.about(t!("cli.stats_about").to_string())
+                .mut_arg("limit", |a| a.help(t!("cli.arg_stats_limit").to_string()))
+        })
+        .mut_subcommand("diagnose", |sc| {
+            sc.about(t!("cli.diagnose_about").to_string())
+                .mut_arg("output", |a| {
+                    a.help(t!("cli.arg_diagnose_output").to_string())
+                })
+        })
         .mut_subcommand("pair", |sc| {
             sc.about(t!("cli.pair_about").to_string())
                 .mut_arg("list", |a| a.help(t!("cli.arg_pair_list").to_string()))
@@ -316,6 +355,15 @@ async fn main() {
             std::process::exit(1);
         }
     };
+    if cli.log_json {
+        let path = ui::init_global_jsonl(None);
+        println!(
+            "{} {} {}",
+            "[info]".cyan(),
+            t!("cli.log_json_started"),
+            path.display()
+        );
+    }
 
     if let Some(l) = &cli.lang {
         let selected = Language::from_code(l);
@@ -353,6 +401,8 @@ async fn main() {
             mirror,
             no_install_manager,
             timeout,
+            all_devices,
+            soft_reboot,
         } => {
             commands::run_exploit(
                 cli.serial,
@@ -373,6 +423,8 @@ async fn main() {
                 no_install_manager,
                 timeout,
                 transport_mode,
+                all_devices,
+                soft_reboot,
             )
             .await
         }
@@ -399,6 +451,10 @@ async fn main() {
             HistoryAction::Show { id } => commands::run_history_show(&id).await,
             HistoryAction::Clear => commands::run_history_clear().await,
         },
+        Commands::Stats { limit } => commands::run_stats(limit).await,
+        Commands::Diagnose { output } => {
+            commands::run_diagnose(cli.serial, transport_mode, output).await
+        }
     };
 
     if let Err(err) = result {
