@@ -18,7 +18,7 @@ pub enum KsuVariant {
 impl KsuVariant {
     pub fn display_name(&self) -> &'static str {
         match self {
-            Self::KernelSU => "KernelSU (官方版)",
+            Self::KernelSU => "KernelSU",
             Self::KernelSuNext => "KernelSU Next",
             Self::SukiSuUltra => "SukiSU Ultra",
             Self::ReSukiSu => "ReSukiSU",
@@ -275,7 +275,7 @@ mod tests {
 
         assert_eq!(KsuVariant::from_id("kernelsu"), KsuVariant::KernelSU);
         assert_eq!(KsuVariant::KernelSU.package_name(), "me.weishu.kernelsu");
-
+        assert_eq!(KsuVariant::KernelSU.display_name(), "KernelSU");
         assert_eq!(KsuVariant::from_id("next"), KsuVariant::KernelSuNext);
         assert_eq!(
             KsuVariant::KernelSuNext.package_name(),
