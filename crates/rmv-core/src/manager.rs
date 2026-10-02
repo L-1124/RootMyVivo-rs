@@ -370,7 +370,9 @@ impl ManagerDownloader {
             };
 
             let total_size = resp.content_length().unwrap_or(asset_info.size);
-            let mut file = match File::create(&dest_path).await {
+            // 先写入临时文件，校验通过后原子重命名，避免中断留下残缺缓存
+            let tmp_path = cache_dir.join(format!("{}.part", dest_filename));
+            let mut file = match File::create(&tmp_path).await {
                 Ok(f) => f,
                 Err(e) => return Err(RmvError::Io(e)),
             };
@@ -436,21 +438,28 @@ impl ManagerDownloader {
             }
 
             if stream_failed {
-                let _ = tokio::fs::remove_file(&dest_path).await;
+                let _ = tokio::fs::remove_file(&tmp_path).await;
                 continue;
             }
 
             let _ = file.flush().await;
+            drop(file);
 
-            if let Ok(meta) = tokio::fs::metadata(&dest_path).await {
-                if total_size > 0
-                    && meta.len() != total_size
-                    && (meta.len() < total_size.saturating_sub(1024))
-                {
-                    let _ = tokio::fs::remove_file(&dest_path).await;
-                    last_error = Some("文件大小不匹配".to_string());
-                    continue;
-                }
+            // 严格校验大小，失败或超限即认为损坏
+            let meta_ok = match tokio::fs::metadata(&tmp_path).await {
+                Ok(meta) => total_size > 0 && meta.len() == total_size,
+                Err(_) => false,
+            };
+            if !meta_ok {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                last_error = Some("文件大小不匹配".to_string());
+                continue;
+            }
+
+            if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                last_error = Some(e.to_string());
+                continue;
             }
 
             success = true;

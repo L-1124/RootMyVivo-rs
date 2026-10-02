@@ -487,8 +487,10 @@ impl ExploitEngine {
                     break;
                 }
 
-                // 载荷写下的完成哨兵：DONE ('1' = 成功, '0' = 失败)
-                if done_part.contains('1') {
+                // 载荷写下的完成哨兵：DONE ('1' 或 RMV_DONE = 成功, '0' = 失败)
+                let done_ok = done_part.contains('1') || done_part.contains("RMV_DONE");
+                let done_fail = done_part.contains('0');
+                if done_ok {
                     let mut su_ready = false;
                     for _ in 0..10 {
                         let (_, su_check) = transport
@@ -505,7 +507,7 @@ impl ExploitEngine {
                         is_rooted = true;
                         break;
                     }
-                } else if done_part.contains('0') {
+                } else if done_fail {
                     attempts_exhausted = true;
                     break;
                 }
@@ -523,6 +525,12 @@ impl ExploitEngine {
 
             if !is_rooted {
                 let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+                // 失败路径必须终止后台载荷并清理残留，避免内核污染与文件残留
+                let _ = transport
+                    .exec("pkill -9 -x true 2>/dev/null; pkill -f preload.so 2>/dev/null")
+                    .await;
+                let _ = Persistence::clean_traces(transport).await;
+
                 if boot_poisoned {
                     let _ = event_tx.send(EngineEvent::Log {
                         level: LogLevel::Error,
@@ -606,20 +614,11 @@ impl ExploitEngine {
 
                 let mut host_apk = options.manager_apk.clone();
                 if host_apk.is_none() {
-                    let has_ksud = transport
-                        .exec("test -x /data/local/tmp/rmv/ksud")
+                    let (code, out) = transport
+                        .exec(&format!("pm path {}", options.ksu_variant.package_name()))
                         .await
-                        .map(|(c, _)| c == 0)
-                        .unwrap_or(false);
-                    let has_installed_app = if !has_ksud {
-                        let (code, out) = transport
-                            .exec(&format!("pm path {}", options.ksu_variant.package_name()))
-                            .await
-                            .unwrap_or((1, String::new()));
-                        code == 0 && out.contains("package:")
-                    } else {
-                        true
-                    };
+                        .unwrap_or((1, String::new()));
+                    let has_installed_app = code == 0 && out.contains("package:");
 
                     if !has_installed_app {
                         let _ = event_tx.send(EngineEvent::Log {
@@ -661,8 +660,13 @@ impl ExploitEngine {
                             });
                             let remote_install_apk = "/data/local/tmp/rmv/manager_install.apk";
                             if transport.push(apk_path, remote_install_apk).await.is_ok() {
+                                // Root 环境执行安装以规避 OEM 限制
+                                let install_cmd = format!(
+                                    "sh -c 'if [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c \"pm install -r -d {}\" 2>/dev/null; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c \"pm install -r -d {}\" 2>/dev/null; elif [ -x /system/bin/su ]; then /system/bin/su -c \"pm install -r -d {}\" 2>/dev/null; else pm install -r -d {}; fi'",
+                                    remote_install_apk, remote_install_apk, remote_install_apk, remote_install_apk
+                                );
                                 let (inst_code, inst_out) = transport
-                                    .exec(&format!("pm install -r -d {}", remote_install_apk))
+                                    .exec(&install_cmd)
                                     .await
                                     .unwrap_or((1, String::new()));
                                 let _ = transport
