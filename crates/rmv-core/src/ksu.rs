@@ -75,9 +75,9 @@ pub struct KsuOrchestrator;
 
 impl KsuOrchestrator {
     pub async fn is_module_loaded<T: Transport>(transport: &T) -> Result<bool> {
-        let (_, out) = transport
-            .exec("cat /proc/modules 2>/dev/null | grep -i kernelsu")
-            .await?;
+        // /proc/modules 受 SELinux 限制，需通过 root 读取
+        let cmd = "sh -c 'if [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c \"cat /proc/modules\" 2>/dev/null; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c \"cat /proc/modules\" 2>/dev/null; elif [ -x /system/bin/su ]; then /system/bin/su -c \"cat /proc/modules\" 2>/dev/null; else cat /proc/modules 2>/dev/null; fi' | grep -i kernelsu";
+        let (_, out) = transport.exec(cmd).await?;
         Ok(out.to_lowercase().contains("kernelsu"))
     }
     pub async fn wait_for_framework_ready<T: Transport>(
