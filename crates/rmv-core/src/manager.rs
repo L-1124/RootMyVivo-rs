@@ -39,12 +39,6 @@ impl ManagerAssetInfo {
     pub fn file_name(&self) -> &str {
         &self.filename
     }
-
-    /// Returns the expected asset size in bytes, or 0 if unknown.
-    #[must_use]
-    pub fn size(&self) -> u64 {
-        0
-    }
 }
 
 /// Metadata describing a locally cached root manager APK file.
@@ -344,44 +338,33 @@ impl ManagerDownloader {
     ///
     /// # Errors
     /// Returns an error if metadata fetching fails, temporary directory creation fails, network streaming fails, or hash verification fails.
-    async fn reuse_cached(
-        dest_path: &Path,
-        expected_sha256: Option<&str>,
-        total_size: u64,
-    ) -> Result<bool> {
+    async fn reuse_cached(dest_path: &Path, expected_sha256: Option<&str>) -> Result<bool> {
+        let Some(expected_hash) = expected_sha256 else {
+            return Ok(false);
+        };
         if !dest_path.exists() {
             return Ok(false);
         }
-        let Ok(meta) = tokio::fs::metadata(dest_path).await else {
+        let Ok(bytes) = tokio::fs::read(dest_path).await else {
             return Ok(false);
         };
-
-        if let Some(expected_hash) = expected_sha256 {
-            if let Ok(bytes) = tokio::fs::read(dest_path).await {
-                let mut hasher = Sha256::new();
-                hasher.update(&bytes);
-                let calculated = format!("{:x}", hasher.finalize());
-                if calculated.eq_ignore_ascii_case(expected_hash) {
-                    return Ok(true);
-                }
-                let _ = tokio::fs::remove_file(dest_path).await;
-            }
-            Ok(false)
-        } else if meta.len() == total_size || (meta.len() > 1_000_000 && total_size == 0) {
-            Ok(true)
-        } else {
-            Ok(false)
+        let mut hasher = Sha256::new();
+        hasher.update(&bytes);
+        let calculated = format!("{:x}", hasher.finalize());
+        if calculated.eq_ignore_ascii_case(expected_hash) {
+            return Ok(true);
         }
+        let _ = tokio::fs::remove_file(dest_path).await;
+        Ok(false)
     }
 
     async fn stream_to_temp(
         resp: reqwest::Response,
         cache_dir: &Path,
         dest_filename: &str,
-        expected_size: u64,
         event_tx: Option<&UnboundedSender<EngineEvent>>,
     ) -> Result<(PathBuf, String)> {
-        let total_size = resp.content_length().unwrap_or(expected_size);
+        let total_size = resp.content_length();
         let mut hasher = Sha256::new();
         let seq = PART_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tmp_path = cache_dir.join(format!("{dest_filename}.part.{}.{seq}", std::process::id()));
@@ -391,7 +374,7 @@ impl ManagerDownloader {
             let _ = tx.send(EngineEvent::Download {
                 filename: dest_filename.to_string(),
                 downloaded: 0,
-                total: total_size,
+                total: total_size.unwrap_or(0),
             });
         }
 
@@ -424,7 +407,7 @@ impl ManagerDownloader {
                         let _ = tx.send(EngineEvent::Download {
                             filename: dest_filename.to_string(),
                             downloaded,
-                            total: total_size,
+                            total: total_size.unwrap_or(0),
                         });
                     }
                 }
@@ -443,8 +426,8 @@ impl ManagerDownloader {
         if let Some(tx) = event_tx {
             let _ = tx.send(EngineEvent::Download {
                 filename: dest_filename.to_string(),
-                downloaded: total_size,
-                total: total_size,
+                downloaded,
+                total: total_size.unwrap_or(downloaded),
             });
         }
 
@@ -452,7 +435,7 @@ impl ManagerDownloader {
         drop(file);
 
         let meta = tokio::fs::metadata(&tmp_path).await?;
-        if (total_size > 0 && meta.len() != total_size) || meta.len() == 0 {
+        if meta.len() == 0 || total_size.is_some_and(|expected| meta.len() != expected) {
             let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err(RmvError::KsuFailed("文件大小不匹配".to_string()));
         }
@@ -512,8 +495,7 @@ impl ManagerDownloader {
         event_tx: Option<&UnboundedSender<EngineEvent>>,
     ) -> Result<PathBuf> {
         let (tmp_path, calculated_hash) =
-            Self::stream_to_temp(resp, cache_dir, dest_filename, asset_info.size(), event_tx)
-                .await?;
+            Self::stream_to_temp(resp, cache_dir, dest_filename, event_tx).await?;
         let promoted =
             Self::verify_and_promote(&tmp_path, dest_path, &calculated_hash, asset_info.sha256)
                 .await?;
@@ -537,7 +519,7 @@ impl ManagerDownloader {
         asset_info: &ManagerAssetInfo,
         event_tx: Option<&UnboundedSender<EngineEvent>>,
     ) -> Result<Option<PathBuf>> {
-        if Self::reuse_cached(dest_path, asset_info.sha256, asset_info.size()).await? {
+        if Self::reuse_cached(dest_path, asset_info.sha256).await? {
             if let Some(tx) = event_tx {
                 let meta_len = tokio::fs::metadata(dest_path).await.map_or(0, |m| m.len());
                 let _ = tx.send(EngineEvent::Log {
