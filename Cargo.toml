@@ -47,8 +47,8 @@ unimplemented = "deny"
 dbg_macro = "deny"
 undocumented_unsafe_blocks = "deny"
 
-disallowed_methods = "warn"
-disallowed_types = "warn"
+disallowed_methods = "deny"
+disallowed_types = "deny"
 
 unwrap_used = "warn"
 expect_used = "warn"
