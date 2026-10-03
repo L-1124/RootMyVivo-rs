@@ -3,8 +3,8 @@
 ## Project Overview
 
 `RootMyVivo-rs` is a cross-platform, pure-Rust toolchain providing unlock-free temporary root and KernelSU/SukiSU LKM late-loading for bootloader-locked vivo/iQOO devices exploiting CVE-2026-43499.
-The project connects to target devices via pure-Rust ADB protocol:
-- **Primary Transport**: Pure-Rust Smartsocket client (`adb_client`) connecting to local ADB server daemon with automatic background server lifecycle management.
+The project connects to target devices over the ADB protocol:
+- **Primary Transport**: a pure-Rust Smartsocket client (`adb_client`) that talks to the local ADB server.
 - **CLI Fallback**: `AdbCliTransport` for direct CLI subprocess failover.
 
 ---
@@ -43,7 +43,7 @@ graph TD
 
 ## Key Directories
 
-- `crates/rmv-core/`: Core library housing the exploit pipeline, vulnerability/catalog gates, KernelSU orchestration, and all transport implementations (`usb`, `wifi`, `cli`).
+- `crates/rmv-core/`: Core library housing the exploit pipeline, vulnerability/catalog gates, KernelSU orchestration, and the transport layer (`transport/{adb,client,builder,mdns}.rs`).
 - `crates/rmv-cli/`: Desktop terminal binary (`rmv`) providing command dispatch, argument parsing, and interactive terminal UI.
 
 ---
@@ -71,17 +71,17 @@ cargo test --workspace
 cargo test -p rmv-core
 
 # Run specific test by substring filter
-cargo test -p rmv-core spake2
+cargo test -p rmv-core quote
 cargo test -p rmv-core test_format_epoch_seconds
 ```
 
 ### Running CLI Commands
 ```bash
-# Check connected device status (auto-detects USB, Wi-Fi mDNS, or CLI)
+# Check connected device status (tries the local ADB server, then the adb CLI)
 cargo run --bin rmv -- check -t auto
 
-# Direct USB inspection (pure Rust, bypasses adb.exe)
-cargo run --bin rmv -- check -t usb
+# Force the Smartsocket client instead of the adb CLI subprocess
+cargo run --bin rmv -- check -t client
 
 # Pair with Android 11+ Wireless Debugging
 cargo run --bin rmv -- pair 192.168.1.50:37123 876543
@@ -127,6 +127,6 @@ Terminal messages must use standardized, clean ASCII status prefixes without dec
 
 ## Testing & QA
 
-- **Unit & Regression Testing**: 36 tests reside in `rmv-core` (`catalog.rs`, `device.rs`, `history.rs`, `i18n.rs`, `ksu.rs`, `manager.rs`, `paths.rs`, `quote.rs`), `engine_test.rs` (paused-time regression tests via `MockTransport`), and `rmv-cli` (`main.rs`).
+- **Unit & Regression Testing**: 42 tests reside in `rmv-core` (`catalog.rs`, `device.rs`, `engine.rs`, `history.rs`, `i18n.rs`, `ksu.rs`, `manager.rs`, `paths.rs`, `quote.rs`), `engine_test.rs` (paused-time regression tests via `MockTransport`), and `rmv-cli` (`history.rs`, `main.rs`).
 - **Regression Gates**:
   - `cargo test --workspace` must pass with 0 failures before any pull request or commit.

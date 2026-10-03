@@ -40,7 +40,7 @@ graph TD
 
 ## Key Features
 
-- **Zero ADB Dependency**: Native USB driver (`nusb`) and native Wi-Fi debugging client (`rustls` + SPAKE2) compiled directly into the binary.
+- **Dual Transport Backends**: a pure-Rust Smartsocket client (`adb_client`) talking to the local ADB server, with automatic fallback to the `adb` CLI subprocess.
 - **Smart Root Status & Process Liveness Detection**: Single-roundtrip probe surveys active kernel modules, canonical su paths, process maps, and sentinel files. If the device already has root, the exploit stage is automatically skipped to prevent kernel panic from redundant injection.
 - **Cascading su Resolution**: Polling probe cascades through available su binary paths (`/system/bin/su` || `/data/local/tmp/su` || `su`) to ensure instant detection once root privileges become active.
 - **Multi-tier Remote Catalog & Local Mirrors**: Dynamically resolves payload catalogues across four tiers (`--catalog-url` CLI flag > `RMV_CATALOG_URL` env var > `~/.rmv/catalog_url` persistent config > official GitHub & jsDelivr mirrors).
@@ -81,7 +81,7 @@ The compiled binary will be located at `target/release/rmv` (or `target/release/
 ### Run Test Suite
 
 ```bash
-# Run all workspace unit tests (36 tests across rmv-core, engine_test, and rmv-cli)
+# Run all workspace unit tests (42 tests across rmv-core, engine_test, and rmv-cli)
 cargo test --workspace
 
 
@@ -153,13 +153,13 @@ rmv catalog --catalog-url https://example.com/devices.json
 
 ### 3. Pair Android 11+ Wireless Debugging (`rmv pair`)
 
-Bypasses cables entirely by pairing with Android's built-in Wireless Debugging over SPAKE2 and TLS 1.3:
+Discovers wireless-debugging endpoints over mDNS (`mdns-sd`) and performs the Android pairing handshake through the local ADB server:
 
 ```bash
 # Enter pairing IP:Port and 6-digit code shown in Developer Options
 rmv pair 192.168.1.50:37123 876543
 ```
-Credentials are encrypted and saved to `~/.rmv/adb_tls/` for automatic authentication in future sessions.
+Pairing state lives in the local ADB server key store, so later sessions authenticate without re-pairing.
 
 ### 4. Execute Exploit & Load KernelSU (`rmv run`)
 
@@ -211,16 +211,16 @@ rmv history clear
 Specify the transport backend using the `-t` / `--transport` flag:
 
 ```bash
-# Automatic resolution (USB first, mDNS wireless debugging second, CLI fallback third)
+# Automatic resolution (local ADB server first, adb CLI subprocess as fallback)
 rmv -t auto check
 
-# Force pure-Rust USB transport (nusb, bypasses adb.exe)
-rmv -t usb check
+# Force the pure-Rust Smartsocket client against the local ADB server
+rmv -t client check
 
-# Force pure-Rust Wi-Fi transport (mDNS discovery + TLS 1.3)
+# `usb` and `wifi` are accepted aliases for `client`
 rmv -t wifi check
 
-# Use external adb.exe subprocess
+# Force the external adb.exe subprocess
 rmv -t cli check
 ```
 
