@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(empty_summary.failures, 0);
         assert!(empty_summary.rate.abs() < f64::EPSILON);
         assert!(empty_summary.by_variant.is_empty());
-        assert!(empty_summary.recent_days.is_empty());
+        assert_eq!(empty_summary.recent_days, [] as [DayStats; 0]);
         assert_eq!(empty_summary.last_success, None);
 
         let r1 = RunRecord {

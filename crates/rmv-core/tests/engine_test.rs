@@ -313,6 +313,6 @@ async fn test_custom_payload_missing() {
         err => panic!("Expected ExploitFailed, got {err:?}"),
     }
 
-    assert!(transport.pushed().is_empty());
+    assert_eq!(transport.pushed(), [] as [(String, Vec<u8>); 0]);
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
