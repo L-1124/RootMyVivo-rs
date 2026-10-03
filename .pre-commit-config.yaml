@@ -13,7 +13,7 @@ repos:
 
       - id: cargo-clippy
         name: cargo clippy --workspace --all-targets
-        entry: cargo clippy --workspace --all-targets
+        entry: cargo clippy --workspace --all-targets -- -D warnings
         language: system
         pass_filenames: false
         files: \.(rs|toml)$
