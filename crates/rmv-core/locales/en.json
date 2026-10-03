@@ -6,7 +6,8 @@
     "deploy": "Deploying Payload",
     "exploit": "Privilege Escalation",
     "ksu": "Loading KernelSU",
-    "finished": "Completed"
+    "finished": "Finished",
+    "in_progress": "Exploit pipeline in progress..."
   },
   "error": {
     "adb": "ADB communication failure: %{message}",
@@ -205,6 +206,8 @@
     "arg_soft_reboot": "Trigger soft reboot (ksud soft-reboot) after successful exploit",
     "arg_all_devices": "Concurrently run exploit on all connected devices (cannot be used with single -p payload)",
     "all_devices_starting": "Found %{count} online device(s), starting concurrent exploit pipeline...",
+    "ctrl_c_interrupted": "Received interrupt signal (Ctrl+C). Terminating device payloads and cleaning traces...",
+    "ctrl_c_cleaned": "Device cleanup completed.",
     "all_devices_summary_title": "Multi-Device Exploit Summary",
     "all_devices_summary_footer": "Total %{total} device(s), %{success} passed, %{failed} failed",
     "arg_transport": "Transport backend: auto (ADB server proxy), client, cli",

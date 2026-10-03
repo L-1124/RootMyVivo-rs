@@ -527,6 +527,9 @@ pub async fn run_exploit(
 
         if interrupted {
             for (_, t) in transports {
+                let _ = t
+                    .exec("pkill -9 -x true 2>/dev/null; pkill -f preload.so 2>/dev/null")
+                    .await;
                 let _ = Persistence::clean_traces(&t).await;
             }
             anyhow::bail!("提权任务被用户中断。");
@@ -626,10 +629,23 @@ pub async fn run_exploit(
     let temp_dir = std::env::temp_dir().join("rmv-work");
     let engine = ExploitEngine::new(temp_dir);
 
-    let res = engine.run(&transport, options, event_tx).await;
-    let _ = ui_handle.await;
+    let res = tokio::select! {
+        engine_res = engine.run(&transport, options, event_tx) => {
+            let _ = ui_handle.await;
+            engine_res.map_err(Into::into)
+        }
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("\n{}", t!("cli.ctrl_c_interrupted").yellow().bold());
+            let _ = transport
+                .exec("pkill -9 -x true 2>/dev/null; pkill -f preload.so 2>/dev/null")
+                .await;
+            let _ = Persistence::clean_traces(&transport).await;
+            eprintln!("{}", t!("cli.ctrl_c_cleaned").green());
+            std::process::exit(130);
+        }
+    };
 
-    res.map_err(Into::into)
+    res
 }
 
 pub async fn run_clean(serial: Option<String>, mode: TransportMode) -> Result<()> {
@@ -799,6 +815,7 @@ pub async fn run_history_list(limit: usize) -> Result<()> {
         let status = match rec.resolved_status() {
             rmv_core::RunStatus::Pass => "PASS".green().bold(),
             rmv_core::RunStatus::Partial => "PARTIAL".yellow().bold(),
+            rmv_core::RunStatus::Running => "RUNNING".cyan().bold(),
             rmv_core::RunStatus::Fail => "FAIL".red().bold(),
         };
 
@@ -853,6 +870,7 @@ pub async fn run_history_show(id: &str) -> Result<()> {
     let status_str = match rec.resolved_status() {
         rmv_core::RunStatus::Pass => "PASS".green().bold(),
         rmv_core::RunStatus::Partial => "PARTIAL".yellow().bold(),
+        rmv_core::RunStatus::Running => "RUNNING".cyan().bold(),
         rmv_core::RunStatus::Fail => "FAIL".red().bold(),
     };
     println!("  Status     : {}", status_str);

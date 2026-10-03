@@ -13,6 +13,7 @@ pub enum RunStatus {
     Pass,
     Partial,
     Fail,
+    Running,
 }
 
 impl RunStatus {
@@ -21,6 +22,7 @@ impl RunStatus {
             Self::Pass => "PASS",
             Self::Partial => "PARTIAL",
             Self::Fail => "FAIL",
+            Self::Running => "RUNNING",
         }
     }
 }

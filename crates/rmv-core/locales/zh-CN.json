@@ -6,7 +6,8 @@
     "deploy": "推送载荷",
     "exploit": "执行提权",
     "ksu": "加载 KernelSU",
-    "finished": "完成"
+    "finished": "完成",
+    "in_progress": "正在执行提权流程..."
   },
   "error": {
     "adb": "ADB 通信异常: %{message}",
@@ -205,6 +206,8 @@
     "arg_soft_reboot": "提权成功后触发软重启 (ksud soft-reboot) 以固化状态",
     "arg_all_devices": "对当前连接的所有在线设备并发执行提权（不可与单一 -p 指定载荷混用）",
     "all_devices_starting": "检测到 %{count} 台在线设备，开始并发执行提权管线...",
+    "ctrl_c_interrupted": "收到中断信号 (Ctrl+C)，正在终止手机端载荷并清理现场...",
+    "ctrl_c_cleaned": "手机端现场已清理完毕。",
     "all_devices_summary_title": "多设备提权执行结果汇总",
     "all_devices_summary_footer": "共 %{total} 台设备，%{success} 台成功，%{failed} 台失败",
     "arg_transport": "传输方式：auto（自动通过 ADB Server 连接）、client、cli",

@@ -111,9 +111,44 @@ impl ExploitEngine {
         options: EngineOptions,
         event_tx: UnboundedSender<EngineEvent>,
     ) -> Result<()> {
+        let record_id = HistoryManager::new_record_id();
+        let timestamp = HistoryManager::current_timestamp();
+        let history_dir = HistoryManager::default_dir();
+
+        let initial_record = if options.save_history && !options.dry_run {
+            let init_rec = RunRecord {
+                id: record_id.clone(),
+                timestamp: timestamp.clone(),
+                device_model: "-".to_string(),
+                device_code: "-".to_string(),
+                kernel: "-".to_string(),
+                payload: options
+                    .custom_payload
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                ksu_variant: options.ksu_variant.display_name().to_string(),
+                success: false,
+                status: Some(RunStatus::Running),
+                message: t!("phase.in_progress").to_string(),
+                logs: Vec::new(),
+            };
+            let _ = HistoryManager::save_record(&history_dir, &init_rec).await;
+            Some(init_rec)
+        } else {
+            None
+        };
+
         let mut captured_logs = Vec::new();
         let res = self
-            .run_internal(transport, &options, &event_tx, &mut captured_logs)
+            .run_internal(
+                transport,
+                &options,
+                &event_tx,
+                &mut captured_logs,
+                &record_id,
+                &timestamp,
+            )
             .await;
 
         if options.save_history && !options.dry_run {
@@ -130,6 +165,12 @@ impl ExploitEngine {
                 Err(e) => {
                     let (m, c, k) = if let Ok(d) = transport.get_device_info().await {
                         (d.model, d.device, d.kernel_full)
+                    } else if let Some(init) = &initial_record {
+                        (
+                            init.device_model.clone(),
+                            init.device_code.clone(),
+                            init.kernel.clone(),
+                        )
                     } else {
                         ("-".to_string(), "-".to_string(), "-".to_string())
                     };
@@ -150,8 +191,8 @@ impl ExploitEngine {
             };
 
             let record = RunRecord {
-                id: HistoryManager::new_record_id(),
-                timestamp: HistoryManager::current_timestamp(),
+                id: record_id,
+                timestamp,
                 device_model: model,
                 device_code: code,
                 kernel,
@@ -162,7 +203,7 @@ impl ExploitEngine {
                 message,
                 logs: captured_logs,
             };
-            let _ = HistoryManager::save_record(&HistoryManager::default_dir(), &record).await;
+            let _ = HistoryManager::save_record(&history_dir, &record).await;
         }
 
         res.map(|_| ())
@@ -174,6 +215,8 @@ impl ExploitEngine {
         options: &EngineOptions,
         event_tx: &UnboundedSender<EngineEvent>,
         captured_logs: &mut Vec<String>,
+        record_id: &str,
+        timestamp: &str,
     ) -> Result<(crate::device::DeviceInfo, PathBuf, RunStatus, String)> {
         let total_steps = if options.skip_ksu { 4 } else { 5 };
         let _ = event_tx.send(EngineEvent::Status(EngineStatus::Running));
@@ -185,30 +228,51 @@ impl ExploitEngine {
             desc: t!("phase.device_check").to_string(),
         });
         if options.reboot_first {
-            let _ = event_tx.send(EngineEvent::Log {
-                level: LogLevel::Info,
-                line: t!("log.reboot_pristine").to_string(),
-            });
+            emit_log(
+                event_tx,
+                captured_logs,
+                LogLevel::Info,
+                t!("log.reboot_pristine"),
+            );
             transport.reboot_and_wait(120).await?;
-            let _ = event_tx.send(EngineEvent::Log {
-                level: LogLevel::Ok,
-                line: t!("log.reboot_done").to_string(),
-            });
+            emit_log(event_tx, captured_logs, LogLevel::Ok, t!("log.reboot_done"));
         }
 
         let mut device = transport.get_device_info().await?;
-        let _ = event_tx.send(EngineEvent::Log {
-            level: LogLevel::Ok,
-            line: t!(
+        emit_log(
+            event_tx,
+            captured_logs,
+            LogLevel::Ok,
+            t!(
                 "log.device_info",
                 model = &device.model,
                 device = &device.device,
                 brand = &device.brand,
                 kernel = device.gki_git_id.as_deref().unwrap_or("-")
-            )
-            .to_string(),
-        });
+            ),
+        );
 
+        // 实时同步 Stage 1 结果至本地历史
+        if options.save_history && !options.dry_run {
+            let step1_rec = RunRecord {
+                id: record_id.to_string(),
+                timestamp: timestamp.to_string(),
+                device_model: device.model.clone(),
+                device_code: device.device.clone(),
+                kernel: device.kernel_full.clone(),
+                payload: options
+                    .custom_payload
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                ksu_variant: options.ksu_variant.display_name().to_string(),
+                success: false,
+                status: Some(RunStatus::Running),
+                message: t!("phase.in_progress").to_string(),
+                logs: captured_logs.clone(),
+            };
+            let _ = HistoryManager::save_record(&HistoryManager::default_dir(), &step1_rec).await;
+        }
         match device.evaluate_gate() {
             GateStatus::Vulnerable => {
                 let _ = event_tx.send(EngineEvent::Log {
@@ -621,10 +685,25 @@ impl ExploitEngine {
         }
 
         if !already_rooted {
-            let _ = event_tx.send(EngineEvent::Log {
-                level: LogLevel::Ok,
-                line: t!("log.uid0_ok").to_string(),
-            });
+            emit_log(event_tx, captured_logs, LogLevel::Ok, t!("log.uid0_ok"));
+        }
+
+        // 实时同步 Stage 4 (UID=0 达成) 结果至本地历史
+        if options.save_history && !options.dry_run {
+            let root_rec = RunRecord {
+                id: record_id.to_string(),
+                timestamp: timestamp.to_string(),
+                device_model: device.model.clone(),
+                device_code: device.device.clone(),
+                kernel: device.kernel_full.clone(),
+                payload: payload_local_path.display().to_string(),
+                ksu_variant: options.ksu_variant.display_name().to_string(),
+                success: false,
+                status: Some(RunStatus::Running),
+                message: t!("log.uid0_ok").to_string(),
+                logs: captured_logs.clone(),
+            };
+            let _ = HistoryManager::save_record(&HistoryManager::default_dir(), &root_rec).await;
         }
 
         // 步骤: KernelSU Late-Load
