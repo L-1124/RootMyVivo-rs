@@ -1,4 +1,5 @@
 /// Quotes a string for safe inclusion in POSIX shell commands.
+#[must_use]
 pub fn sh_quote(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();

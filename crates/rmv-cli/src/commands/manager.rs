@@ -1,7 +1,7 @@
 use super::resolve_transport;
 use crate::ui::CliUi;
 use anyhow::Result;
-use colored::*;
+use colored::Colorize;
 use rmv_core::{KsuVariant, TransportMode};
 use rust_i18n::t;
 use tokio::sync::mpsc;
@@ -46,25 +46,29 @@ pub async fn run_manager_download(
     Ok(())
 }
 
-pub async fn run_manager_list() -> Result<()> {
+pub fn run_manager_list() {
     let list = rmv_core::ManagerDownloader::list_cached_managers(None);
     println!("\n{}", t!("cli.manager_list_about").cyan().bold());
     if list.is_empty() {
         println!("  {}", t!("cli.manager_empty").dimmed());
-        return Ok(());
+        return;
     }
     for item in list {
         let name = item.variant.map_or("Unknown", |v| v.display_name());
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "Displaying APK byte size in megabytes"
+        )]
+        let size_mb = (item.size as f64) / (1024.0 * 1024.0);
         println!(
             "  - {} : {} ({:.1} MB)",
             name.green().bold(),
             item.file_name,
-            item.size as f32 / 1024.0 / 1024.0
+            size_mb
         );
         println!("    {}", item.path.display().to_string().dimmed());
     }
     println!();
-    Ok(())
 }
 
 pub async fn run_manager_install(
@@ -97,9 +101,9 @@ pub async fn run_manager_install(
     let remote_path = "/data/local/tmp/rmv/manager_install.apk";
     transport.push(&apk_path, remote_path).await?;
     let out = transport
-        .exec(&format!("pm install -r -d {}", remote_path))
+        .exec(&format!("pm install -r -d {remote_path}"))
         .await?;
-    let _ = transport.exec(&format!("rm -f {}", remote_path)).await;
+    let _ = transport.exec(&format!("rm -f {remote_path}")).await;
 
     if out.success() && (out.combined().contains("Success") || out.combined().trim().is_empty()) {
         println!(

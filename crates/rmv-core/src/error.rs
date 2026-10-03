@@ -1,41 +1,81 @@
+/// Core error enumeration encompassing transport, exploit, and supply chain failures.
 #[derive(Debug, thiserror::Error)]
 pub enum RmvError {
+    /// Low-level ADB communication or command failure.
     #[error("ADB error: {message}")]
-    Adb { message: String, code: Option<i32> },
+    Adb {
+        /// Descriptive error message.
+        message: String,
+        /// Optional exit status code.
+        code: Option<i32>,
+    },
+    /// Target device could not be located or identified.
     #[error("Device not found: {0}")]
     DeviceNotFound(String),
+    /// Linux kernel version on device is patched or out of vulnerable range.
     #[error("Unsupported kernel version: {version} ({reason})")]
-    UnsupportedKernel { version: String, reason: String },
+    UnsupportedKernel {
+        /// Detected kernel release string.
+        version: String,
+        /// Evaluation rationale.
+        reason: String,
+    },
+    /// Remote payload catalog download failed.
     #[error("Catalog fetch failed: {0}")]
     CatalogFetchFailed(String),
+    /// No matching exploit payload exists in the catalog for the target device.
     #[error("Payload not found for device {device} with kernel {kernel}")]
-    PayloadNotFound { device: String, kernel: String },
+    PayloadNotFound {
+        /// Target device model code.
+        device: String,
+        /// Kernel build fingerprint.
+        kernel: String,
+    },
+    /// Cryptographic checksum of downloaded asset does not match expected digest.
     #[error("Payload hash mismatch: expected {expected}, actual {actual}")]
-    HashMismatch { expected: String, actual: String },
+    HashMismatch {
+        /// Expected SHA-256 hex digest.
+        expected: String,
+        /// Computed actual SHA-256 hex digest.
+        actual: String,
+    },
+    /// Exploit polling loop timed out before achieving root.
     #[error("Exploit timeout (last attempt: {last_attempt:?})")]
     ExploitTimeout {
+        /// Last recorded exploit attempt number.
         last_attempt: Option<u32>,
+        /// Tail of remote execution log.
         log_tail: String,
     },
+    /// Previous exploit failure left kernel memory poisoned.
     #[error("Kernel slab memory poisoned by previous exploit; reboot required")]
     BootPoisoned,
+    /// Device kernel panic or unexpected reboot during exploit.
     #[error("Device unexpectedly rebooted during exploit execution (kernel panic suspected)")]
     DeviceRebooted,
+    /// Exploit daemon process exited prematurely or returned failure.
     #[error("Exploit failed: {0}")]
     ExploitFailed(String),
+    /// `KernelSU` driver loading or daemon invocation failed.
     #[error("KernelSU operation failed: {0}")]
     KsuFailed(String),
+    /// Operation was cancelled by user or signal.
     #[error("Operation cancelled")]
     Cancelled,
+    /// Underlying standard I/O error.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// Network request failure.
     #[error(transparent)]
     Http(#[from] reqwest::Error),
+    /// JSON serialization or deserialization failure.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
 
 impl RmvError {
+    /// Returns a localized user-friendly representation of the error.
+    #[must_use]
     pub fn localized(&self) -> String {
         match self {
             Self::Adb { message, .. } => rust_i18n::t!("error.adb", message = message).to_string(),
@@ -83,4 +123,5 @@ impl RmvError {
     }
 }
 
+/// Standard result type alias using `RmvError` as default error type.
 pub type Result<T, E = RmvError> = std::result::Result<T, E>;

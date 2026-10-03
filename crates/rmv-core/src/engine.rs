@@ -17,34 +17,51 @@ use crate::persistence::Persistence;
 use crate::quote::sh_quote;
 use crate::transport::{Transport, TransportExt};
 
-static ATTEMPT_RE: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"rmv exploit attempt (\d+)/(\d+)").unwrap());
+#[expect(clippy::expect_used, reason = "Known compile-time regex literal")]
+static ATTEMPT_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"rmv exploit attempt (\d+)/(\d+)").expect("valid exploit attempt regex")
+});
+
+/// Options configuring the execution of [`ExploitEngine`].
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "CLI argument configuration bag with boolean flags"
+)]
 pub struct EngineOptions {
+    /// Optional path to a custom local `.so` payload instead of downloading from catalog.
     pub custom_payload: Option<PathBuf>,
+    /// Optional custom URL pointing to a remote `catalog.json`.
     pub custom_catalog_url: Option<String>,
+    /// Variant of `KernelSU`/`SukiSU` to deploy upon obtaining root privilege.
     pub ksu_variant: KsuVariant,
+    /// Whether to skip `KernelSU` installation and leave raw temporary root intact.
     pub skip_ksu: bool,
+    /// Maximum number of exploit attempts before giving up.
     pub attempts: u32,
+    /// Delay in seconds between successive exploit attempts.
     pub retry_delay: u64,
+    /// Whether to persist run records into the local history store.
     pub save_history: bool,
+    /// Whether to force a device reboot before launching the exploit loop.
     pub reboot_first: bool,
+    /// Whether to bypass gate check failures and force payload deployment.
     pub force_payload: bool,
-    /// 本地载荷库目录，闸门失败时用于按本机指纹回退配对。
+    /// Local directories searched for fallback payloads matching device fingerprint.
     pub payload_dirs: Vec<PathBuf>,
-    /// 只解析与校验载荷，不下发、不执行。
+    /// When true, resolves and validates payloads without pushing or executing on device.
     pub dry_run: bool,
-    /// PC 本地提供的 KernelSU/SukiSU 管理器 APK 路径（用于免预装就地提取 ksud）。
+    /// Path to a local `KernelSU`/`SukiSU` manager APK to extract `ksud` without preinstallation.
     pub manager_apk: Option<PathBuf>,
-    /// GitHub Release 加速镜像前缀（如 <https://ghproxy.net/> 或 direct）
+    /// Mirror prefix URL for GitHub Releases downloads (e.g. `https://ghproxy.net/`).
     pub github_mirror: Option<String>,
-    /// 管理器版本 Tag（None 表示默认最新发布版）
+    /// Target manager version tag (e.g. `v4.2.0`), or `None` for pinned default.
     pub manager_version: Option<String>,
-    /// 提权成功后是否自动静默安装管理器 APK（默认为 true）
+    /// Whether to automatically install the manager APK onto the device after root.
     pub install_manager: bool,
-    /// 提权等待窗口（秒）。CFI 探测最多 24 次且带随机延迟，窗口需覆盖整个探测期。
+    /// Timeout in seconds waiting for exploit completion sentinel or process exit.
     pub timeout_secs: u64,
-    /// 提权与 KernelSU 加载成功后是否自动触发系统软重启 (ksud soft-reboot)
+    /// Whether to execute `ksud soft-reboot` after successful `KernelSU` deployment.
     pub soft_reboot: bool,
 }
 
@@ -72,6 +89,7 @@ impl Default for EngineOptions {
     }
 }
 
+/// Orchestrates device verification, payload resolution, exploit execution, and `KernelSU` late-loading.
 pub struct ExploitEngine {
     client: Client,
     work_dir: PathBuf,
@@ -99,6 +117,7 @@ fn emit_log(
 }
 
 impl ExploitEngine {
+    /// Creates a new `ExploitEngine` with a configured local working directory.
     pub fn new(work_dir: impl AsRef<Path>) -> Self {
         Self {
             client: Client::builder()
@@ -109,6 +128,13 @@ impl ExploitEngine {
         }
     }
 
+    /// Executes the complete root acquisition and `KernelSU` late-load lifecycle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if device communication fails, gate checks reject the target,
+    /// payload download or verification fails, the exploit process exits or times out,
+    /// or `KernelSU` deployment encounters an unrecoverable error.
     pub async fn run<T: Transport>(
         &self,
         transport: &T,
@@ -557,52 +583,22 @@ impl ExploitEngine {
         captured_logs: &mut Vec<String>,
         total_steps: usize,
     ) -> Result<bool> {
+        let step_index = if options.custom_payload.is_some() {
+            3
+        } else {
+            4
+        };
         let _ = event_tx.send(EngineEvent::Step {
             phase: Phase::Exploit,
-            index: if options.custom_payload.is_some() {
-                3
-            } else {
-                4
-            },
+            index: step_index,
             total: total_steps,
             desc: t!("log.exploit_start").to_string(),
         });
 
-        // 确保设备处于已完全启动就绪状态 (sys.boot_completed == 1)
-        if let Ok(out) = transport.exec("getprop sys.boot_completed").await {
-            if !out.success() || out.stdout.trim() != "1" {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Info,
-                    line: t!("log.waiting_boot_complete").to_string(),
-                });
-                let boot_deadline = std::time::Instant::now();
-                while boot_deadline.elapsed() < Duration::from_secs(120) {
-                    sleep(Duration::from_secs(2)).await;
-                    if let Ok(o) = transport.exec("getprop sys.boot_completed").await {
-                        if o.success() && o.stdout.trim() == "1" {
-                            break;
-                        }
-                    }
-                }
-                sleep(Duration::from_secs(4)).await;
-            }
-        }
+        wait_boot_completed(transport, event_tx).await;
+        refresh_boot_id(transport, device).await;
 
-        // 刷新当前真实的 live boot_id，杜绝因开机延迟等造成的假阳性误判
-        if let Ok(out) = transport
-            .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
-            .await
-        {
-            let cur = out.stdout.trim();
-            if out.success() && !cur.is_empty() {
-                device.boot_id = cur.to_string();
-            }
-        }
-
-        // 检查是否已拥有 root 权限
-        let root_status = check_root_status(transport).await?;
-        let already_rooted = root_status.is_rooted();
-        if already_rooted {
+        if check_root_status(transport).await?.is_rooted() {
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
                 line: t!("log.root_already").to_string(),
@@ -612,198 +608,79 @@ impl ExploitEngine {
 
         let remote_dir = "/data/local/tmp/rmv";
         let remote_so = "/data/local/tmp/rmv/preload.so";
+        launch_exploit(transport, options, remote_dir, remote_so).await?;
 
-        // 启动前先杀死残留的僵死 true 进程并清空历史 DONE 哨兵，保证全新提权环境
-        let _ = transport
-            .exec("pkill -9 -x true 2>/dev/null; rm -f /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE /data/local/tmp/rmv/live.log")
-            .await;
-        let run_cmd = format!(
-            "cd {} && (RMV_HOME={} RMV_ATTEMPTS={} RMV_RETRY_DELAY={} LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 &)",
-            sh_quote(remote_dir),
-            sh_quote(remote_dir),
-            sh_quote(&options.attempts.to_string()),
-            sh_quote(&options.retry_delay.to_string()),
-            sh_quote(remote_so)
-        );
-        let _ = transport.exec(&run_cmd).await?;
-
-        // CFI 探测单轮最多 24 次且每次带随机延迟，窗口需覆盖整个探测期
         let timeout_limit = options.timeout_secs;
         let mut elapsed_sec = 0u64;
         let mut last_log_tail = String::new();
         let mut last_attempt: Option<u32> = None;
         let mut is_rooted = false;
-        let mut payload_alive;
         let mut boot_poisoned = false;
         let mut attempts_exhausted = false;
         let mut process_exited = false;
+        let probe_cmd = build_probe_cmd(remote_dir);
 
         while timeout_limit == 0 || elapsed_sec < timeout_limit {
             sleep(Duration::from_secs(2)).await;
             elapsed_sec += 2;
 
-            // Single round-trip fast probe: logs, completion sentinel, liveness, su
-            let probe_exec = transport
-                .exec(
-                    "tail -n 15 /data/local/tmp/rmv/live.log 2>/dev/null; \
-                     echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE 2>/dev/null | head -n 1; \
-                     echo __RMV_ALIVE__; pgrep -x true 2>/dev/null || pgrep -f preload.so 2>/dev/null; \
-                     echo __RMV_SU__; [ -e /data/local/tmp/rmv/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf /data/local/tmp/rmv/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null; [ -e /data/local/tmp/rmv/su ] && [ ! -e /data/local/tmp/su ] && ln -sf /data/local/tmp/rmv/su /data/local/tmp/su 2>/dev/null; RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null || /system/bin/su -c id 2>/dev/null; \
-                     echo __RMV_END__",
-                )
-                .await?;
-            let probe = probe_exec.combined();
-            let tail_part = probe
-                .split("__RMV_DONE__")
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            let done_part = probe
-                .split("__RMV_DONE__")
-                .nth(1)
-                .unwrap_or("")
-                .split("__RMV_ALIVE__")
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            let alive_part = probe
-                .split("__RMV_ALIVE__")
-                .nth(1)
-                .unwrap_or("")
-                .split("__RMV_SU__")
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            let su_part = probe
-                .split("__RMV_SU__")
-                .nth(1)
-                .unwrap_or("")
-                .split("__RMV_END__")
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
+            let probe_exec = transport.exec(&probe_cmd).await?;
+            let probe = parse_probe_output(&probe_exec.combined());
 
-            if !tail_part.is_empty() && tail_part != last_log_tail {
-                last_log_tail = tail_part.clone();
-                if let Some(caps) = ATTEMPT_RE.captures(&tail_part) {
-                    last_attempt = caps.get(1).and_then(|m| m.as_str().parse().ok());
-                }
-                let lines: Vec<String> = tail_part
-                    .lines()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                for l in &lines {
-                    append_captured_log(captured_logs, l);
-                }
-                let _ = event_tx.send(EngineEvent::ExploitLive {
-                    attempt: last_attempt,
-                    max: Some(options.attempts),
-                    lines,
-                });
-            }
+            handle_probe_logs(
+                &probe,
+                &mut last_log_tail,
+                &mut last_attempt,
+                options.attempts,
+                event_tx,
+                captured_logs,
+            );
 
-            if tail_part.contains("boot_poisoned") {
-                boot_poisoned = true;
-            }
-
-            payload_alive = !alive_part.is_empty();
-
-            if su_part.contains("uid=0") {
-                is_rooted = true;
-                break;
-            }
-
-            // 载荷写下的完成哨兵：DONE ('1' 或 RMV_DONE = 成功, '0' = 失败)
-            let done_ok = done_part.contains('1') || done_part.contains("RMV_DONE");
-            let done_fail = done_part.contains('0');
-            if done_ok {
-                let mut su_ready = false;
-                for _ in 0..10 {
-                    let su_exec = transport
-                        .exec("RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null || /system/bin/su -c id 2>/dev/null")
-                        .await;
-                    let su_check = su_exec.map(|o| o.combined()).unwrap_or_default();
-                    if su_check.contains("uid=0") {
-                        su_ready = true;
-                        break;
-                    }
-                    sleep(Duration::from_millis(500)).await;
-                }
-                if su_ready {
+            match probe.outcome {
+                ProbeOutcome::Rooted => {
                     is_rooted = true;
                     break;
                 }
-            } else if done_fail {
-                attempts_exhausted = true;
-                break;
-            }
-
-            // 载荷进程已退出且无完成哨兵：崩溃或异常中断，无需空等窗口
-            if elapsed_sec >= 6 && !payload_alive {
-                process_exited = true;
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Error,
-                    line: t!("log.exploit_gone").to_string(),
-                });
-                break;
+                ProbeOutcome::BootPoisoned => {
+                    boot_poisoned = true;
+                }
+                ProbeOutcome::DoneSuccess => {
+                    if check_su_polling(transport).await {
+                        is_rooted = true;
+                        break;
+                    }
+                }
+                ProbeOutcome::DoneFailed => {
+                    attempts_exhausted = true;
+                    break;
+                }
+                ProbeOutcome::DaemonExited if elapsed_sec >= 6 => {
+                    process_exited = true;
+                    let _ = event_tx.send(EngineEvent::Log {
+                        level: LogLevel::Error,
+                        line: t!("log.exploit_gone").to_string(),
+                    });
+                    break;
+                }
+                ProbeOutcome::DaemonAlive | ProbeOutcome::DaemonExited => {}
             }
         }
 
         if !is_rooted {
-            let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
-            // 失败路径前先拉取真实设备日志保全至 host history，避免 clean 后证据销毁
-            if let Ok(log_exec) = transport
-                .exec("cat /data/local/tmp/rmv/live.log 2>/dev/null")
-                .await
-            {
-                for line in log_exec.combined().lines() {
-                    let trimmed = line.trim();
-                    if !trimmed.is_empty() {
-                        append_captured_log(captured_logs, trimmed);
-                    }
-                }
-            }
-            let _ = transport
-                .exec("pkill -9 -x true 2>/dev/null; pkill -f preload.so 2>/dev/null")
-                .await;
-            let _ = Persistence::clean_traces(transport).await;
-
-            if boot_poisoned {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Error,
-                    line: t!("log.boot_poisoned").to_string(),
-                });
-                return Err(RmvError::BootPoisoned);
-            }
-
-            if attempts_exhausted {
-                let count = last_attempt.unwrap_or(options.attempts);
-                let err_msg = t!(
-                    "error.exploit_attempts_exhausted",
-                    count = count.to_string()
-                )
-                .to_string();
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Error,
-                    line: err_msg.clone(),
-                });
-                return Err(RmvError::ExploitFailed(err_msg));
-            }
-
-            if process_exited {
-                let err_msg = t!("error.exploit_process_exited").to_string();
-                return Err(RmvError::ExploitFailed(err_msg));
-            }
-
-            return Err(RmvError::ExploitTimeout {
+            classify_failure(
+                transport,
                 last_attempt,
-                log_tail: last_log_tail,
-            });
+                &ExploitFailureState {
+                    boot_poisoned,
+                    attempts_exhausted,
+                    process_exited,
+                    max_attempts: options.attempts,
+                    last_log_tail,
+                },
+                event_tx,
+                captured_logs,
+            )
+            .await?;
         }
 
         Ok(false)
@@ -839,10 +716,12 @@ impl ExploitEngine {
                 total: total_steps,
                 desc: t!("log.ksu_already_active").to_string(),
             });
-            let _ = event_tx.send(EngineEvent::Log {
-                level: LogLevel::Ok,
-                line: t!("log.ksu_already_active").to_string(),
-            });
+            emit_log(
+                event_tx,
+                captured_logs,
+                LogLevel::Ok,
+                t!("log.ksu_already_active"),
+            );
             return Ok(true);
         }
 
@@ -853,163 +732,204 @@ impl ExploitEngine {
             desc: t!("log.ksu_start", name = options.ksu_variant.display_name()).to_string(),
         });
 
-        let mut host_apk = options.manager_apk.clone();
-        if host_apk.is_none() {
-            let pkg_cmd = format!("pm path {}", sh_quote(options.ksu_variant.package_name()));
-            let out = transport.exec(&pkg_cmd).await;
-            let has_installed_app = out
-                .as_ref()
-                .is_ok_and(|o| o.success() && o.stdout.contains("package:"));
-
-            if !has_installed_app {
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Info,
-                    line: t!(
-                        "log.manager_auto_download",
-                        name = options.ksu_variant.display_name()
-                    )
-                    .to_string(),
-                });
-                let downloaded = match ManagerDownloader::download_manager(
-                    &self.client,
-                    options.ksu_variant,
-                    options.manager_version.as_deref(),
-                    None,
-                    options.github_mirror.as_deref(),
-                    Some(event_tx),
-                )
-                .await
-                {
-                    Ok(path) => Some(path),
-                    Err(e) => {
-                        let _ = event_tx.send(EngineEvent::Log {
-                            level: LogLevel::Warn,
-                            line: t!("log.partial_ksu_skipped", error = e.to_string()).to_string(),
-                        });
-                        None
-                    }
-                };
-                host_apk = downloaded;
-            }
-        }
+        let host_apk = self
+            .ensure_manager_apk(transport, options, event_tx)
+            .await?;
 
         if options.install_manager {
             if let Some(apk_path) = host_apk.as_ref() {
                 let pkg = options.ksu_variant.package_name();
-                let pkg_cmd = format!("pm path {}", sh_quote(pkg));
-                let out = transport.exec(&pkg_cmd).await;
-                let has_pkg = out
-                    .as_ref()
-                    .is_ok_and(|o| o.success() && o.stdout.contains("package:"));
-                if !has_pkg {
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Info,
-                        line: t!(
-                            "log.manager_installing",
-                            name = options.ksu_variant.display_name()
-                        )
-                        .to_string(),
-                    });
+                let _ = self
+                    .install_manager_apk(transport, apk_path, pkg, event_tx)
+                    .await;
+            }
+        }
 
-                    // 检测是否处于锁屏或息屏状态（vivo/OriginOS 锁屏下会直接拒绝 USB 安装）
-                    let lock_check_cmd = "sh -c 'dumpsys power 2>/dev/null | grep -iE \"mWakefulness=(Asleep|Dozing)\"; dumpsys window 2>/dev/null | grep -iE \"(mShowing=true|isStatusBarKeyguard=true|mDreamingLockscreen=true)\"; dumpsys trust 2>/dev/null | grep -i \"device is locked: true\"'";
-                    let is_locked = if let Ok(out) = transport.exec(lock_check_cmd).await {
-                        !out.combined().trim().is_empty()
-                    } else {
-                        false
-                    };
+        let ksu_ok = self
+            .late_load_ksu(transport, options, host_apk.as_deref(), event_tx)
+            .await?;
 
-                    if is_locked {
-                        let _ = event_tx.send(EngineEvent::Log {
-                            level: LogLevel::Warn,
-                            line: t!("log.manager_screen_locked").to_string(),
-                        });
-                        let unlock_deadline = std::time::Instant::now();
-                        while unlock_deadline.elapsed() < Duration::from_secs(12) {
-                            sleep(Duration::from_secs(2)).await;
-                            if let Ok(out) = transport.exec(lock_check_cmd).await {
-                                if out.combined().trim().is_empty() {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+        if ksu_ok {
+            emit_log(
+                event_tx,
+                captured_logs,
+                LogLevel::Ok,
+                t!("log.ksu_ok", name = options.ksu_variant.display_name()),
+            );
+        }
 
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Info,
-                        line: t!("log.manager_install_prompt").to_string(),
-                    });
+        Ok(ksu_ok)
+    }
 
-                    let remote_install_apk = "/data/local/tmp/rmv/manager_install.apk";
-                    if transport.push(apk_path, remote_install_apk).await.is_ok() {
-                        // Root 环境执行安装以规避 OEM 限制
-                        let quoted_apk = sh_quote(remote_install_apk);
-                        let install_cmd = format!(
-                            "sh -c 'if [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c \"pm install -r -d \\\"$1\\\"\" 2>/dev/null; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c \"pm install -r -d \\\"$1\\\"\" 2>/dev/null; elif [ -x /system/bin/su ]; then /system/bin/su -c \"pm install -r -d \\\"$1\\\"\" 2>/dev/null; else pm install -r -d \"$1\"; fi' _ {}",
-                            quoted_apk
-                        );
-                        let inst_out = transport.exec(&install_cmd).await;
-                        let rm_cmd = format!("rm -f {}", quoted_apk);
-                        let _ = transport.exec(&rm_cmd).await;
-                        let inst_ok = inst_out.as_ref().is_ok_and(|o| {
-                            o.success()
-                                && (o.combined().contains("Success")
-                                    || o.combined().trim().is_empty())
-                        });
-                        if inst_ok {
-                            let _ = event_tx.send(EngineEvent::Log {
-                                level: LogLevel::Ok,
-                                line: t!(
-                                    "log.manager_install_ok",
-                                    name = options.ksu_variant.display_name()
-                                )
-                                .to_string(),
-                            });
-                        } else {
-                            let err_msg = inst_out.as_ref().map_or_else(
-                                std::string::ToString::to_string,
-                                super::transport::ExecOutput::combined,
-                            );
-                            let _ = event_tx.send(EngineEvent::Log {
-                                level: LogLevel::Warn,
-                                line: t!(
-                                    "error.manager_install_failed",
-                                    name = options.ksu_variant.display_name(),
-                                    message = err_msg.trim()
-                                )
-                                .to_string(),
-                            });
-                        }
+    async fn ensure_manager_apk<T: Transport>(
+        &self,
+        transport: &T,
+        options: &EngineOptions,
+        event_tx: &UnboundedSender<EngineEvent>,
+    ) -> Result<Option<PathBuf>> {
+        if options.manager_apk.is_some() {
+            return Ok(options.manager_apk.clone());
+        }
+
+        let pkg_cmd = format!("pm path {}", sh_quote(options.ksu_variant.package_name()));
+        let out = transport.exec(&pkg_cmd).await;
+        let has_installed_app = out
+            .as_ref()
+            .is_ok_and(|o| o.success() && o.stdout.contains("package:"));
+
+        if has_installed_app {
+            return Ok(None);
+        }
+
+        let _ = event_tx.send(EngineEvent::Log {
+            level: LogLevel::Info,
+            line: t!(
+                "log.manager_auto_download",
+                name = options.ksu_variant.display_name()
+            )
+            .to_string(),
+        });
+
+        match ManagerDownloader::download_manager(
+            &self.client,
+            options.ksu_variant,
+            options.manager_version.as_deref(),
+            None,
+            options.github_mirror.as_deref(),
+            Some(event_tx),
+        )
+        .await
+        {
+            Ok(path) => Ok(Some(path)),
+            Err(e) => {
+                let _ = event_tx.send(EngineEvent::Log {
+                    level: LogLevel::Warn,
+                    line: t!("log.partial_ksu_skipped", error = e.to_string()).to_string(),
+                });
+                Ok(None)
+            }
+        }
+    }
+
+    async fn install_manager_apk<T: Transport>(
+        &self,
+        transport: &T,
+        apk_path: &Path,
+        pkg: &str,
+        event_tx: &UnboundedSender<EngineEvent>,
+    ) -> Result<bool> {
+        let pkg_cmd = format!("pm path {}", sh_quote(pkg));
+        let out = transport.exec(&pkg_cmd).await;
+        let has_pkg = out
+            .as_ref()
+            .is_ok_and(|o| o.success() && o.stdout.contains("package:"));
+        if has_pkg {
+            return Ok(true);
+        }
+
+        let display_name = KsuVariant::all_variants()
+            .iter()
+            .find(|v| v.package_name() == pkg)
+            .map_or(pkg, |v| v.display_name());
+
+        let _ = event_tx.send(EngineEvent::Log {
+            level: LogLevel::Info,
+            line: t!("log.manager_installing", name = display_name).to_string(),
+        });
+
+        let lock_check_cmd = "sh -c 'dumpsys power 2>/dev/null | grep -iE \"mWakefulness=(Asleep|Dozing)\"; dumpsys window 2>/dev/null | grep -iE \"(mShowing=true|isStatusBarKeyguard=true|mDreamingLockscreen=true)\"; dumpsys trust 2>/dev/null | grep -i \"device is locked: true\"'";
+        let is_locked = if let Ok(out) = transport.exec(lock_check_cmd).await {
+            !out.combined().trim().is_empty()
+        } else {
+            false
+        };
+
+        if is_locked {
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Warn,
+                line: t!("log.manager_screen_locked").to_string(),
+            });
+            let unlock_deadline = std::time::Instant::now();
+            while unlock_deadline.elapsed() < Duration::from_secs(12) {
+                sleep(Duration::from_secs(2)).await;
+                if let Ok(out) = transport.exec(lock_check_cmd).await {
+                    if out.combined().trim().is_empty() {
+                        break;
                     }
                 }
             }
         }
 
+        let _ = event_tx.send(EngineEvent::Log {
+            level: LogLevel::Info,
+            line: t!("log.manager_install_prompt").to_string(),
+        });
+
+        let remote_install_apk = "/data/local/tmp/rmv/manager_install.apk";
+        if transport.push(apk_path, remote_install_apk).await.is_err() {
+            return Ok(false);
+        }
+
+        let quoted_apk = sh_quote(remote_install_apk);
+        let install_cmd = format!(
+            "sh -c 'if [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c \"pm install -r -d \\\"$1\\\"\" 2>/dev/null; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c \"pm install -r -d \\\"$1\\\"\" 2>/dev/null; elif [ -x /system/bin/su ]; then /system/bin/su -c \"pm install -r -d \\\"$1\\\"\" 2>/dev/null; else pm install -r -d \"$1\"; fi' _ {quoted_apk}"
+        );
+        let inst_out = transport.exec(&install_cmd).await;
+        let rm_cmd = format!("rm -f {quoted_apk}");
+        let _ = transport.exec(&rm_cmd).await;
+
+        let inst_ok = inst_out.as_ref().is_ok_and(|o| {
+            o.success() && (o.combined().contains("Success") || o.combined().trim().is_empty())
+        });
+        if inst_ok {
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Ok,
+                line: t!("log.manager_install_ok", name = display_name).to_string(),
+            });
+            Ok(true)
+        } else {
+            let err_msg = inst_out.as_ref().map_or_else(
+                std::string::ToString::to_string,
+                super::transport::ExecOutput::combined,
+            );
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Warn,
+                line: t!(
+                    "error.manager_install_failed",
+                    name = display_name,
+                    message = err_msg.trim()
+                )
+                .to_string(),
+            });
+            Ok(false)
+        }
+    }
+
+    async fn late_load_ksu<T: Transport>(
+        &self,
+        transport: &T,
+        options: &EngineOptions,
+        manager_apk: Option<&Path>,
+        event_tx: &UnboundedSender<EngineEvent>,
+    ) -> Result<bool> {
         let late_load_res =
-            KsuOrchestrator::late_load(transport, options.ksu_variant, None, host_apk.as_deref())
-                .await;
+            KsuOrchestrator::late_load(transport, options.ksu_variant, None, manager_apk).await;
 
         if let Err(e) = late_load_res {
             let _ = Persistence::prune_empty_data_adb(transport).await;
             let partial_msg = t!("log.partial_success_temp_root").to_string();
-            emit_log(
-                event_tx,
-                captured_logs,
-                LogLevel::Warn,
-                t!("log.partial_ksu_skipped", error = e.to_string()),
-            );
-            emit_log(
-                event_tx,
-                captured_logs,
-                LogLevel::Info,
-                t!("log.partial_su_hint"),
-            );
-            emit_log(
-                event_tx,
-                captured_logs,
-                LogLevel::Info,
-                t!("log.partial_recovery_hint"),
-            );
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Warn,
+                line: t!("log.partial_ksu_skipped", error = e.to_string()).to_string(),
+            });
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Info,
+                line: t!("log.partial_su_hint").to_string(),
+            });
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Info,
+                line: t!("log.partial_recovery_hint").to_string(),
+            });
             let _ = event_tx.send(EngineEvent::Status(EngineStatus::Partial));
             let _ = event_tx.send(EngineEvent::Completed {
                 success: true,
@@ -1018,13 +938,6 @@ impl ExploitEngine {
             });
             return Ok(false);
         }
-
-        emit_log(
-            event_tx,
-            captured_logs,
-            LogLevel::Ok,
-            t!("log.ksu_ok", name = options.ksu_variant.display_name()),
-        );
 
         Ok(true)
     }
@@ -1072,5 +985,316 @@ impl ExploitEngine {
         });
 
         Ok(success_msg)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbeOutcome {
+    Rooted,
+    BootPoisoned,
+    DoneSuccess,
+    DoneFailed,
+    DaemonAlive,
+    DaemonExited,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExploitProbeResult {
+    pub log_tail: String,
+    pub attempt: Option<u32>,
+    pub outcome: ProbeOutcome,
+}
+
+fn build_probe_cmd(remote_dir: &str) -> String {
+    format!(
+        "tail -n 15 {remote_dir}/live.log 2>/dev/null; \
+         echo __RMV_DONE__; cat {remote_dir}/DONE {remote_dir}/rmv/DONE 2>/dev/null | head -n 1; \
+         echo __RMV_ALIVE__; pgrep -x true 2>/dev/null || pgrep -f preload.so 2>/dev/null; \
+         echo __RMV_SU__; [ -e {remote_dir}/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf {remote_dir}/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null; [ -e {remote_dir}/su ] && [ ! -e /data/local/tmp/su ] && ln -sf {remote_dir}/su /data/local/tmp/su 2>/dev/null; RMV_HOME={remote_dir} {remote_dir}/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null || /system/bin/su -c id 2>/dev/null; \
+         echo __RMV_END__"
+    )
+}
+
+fn parse_probe_output(output: &str) -> ExploitProbeResult {
+    let tail_part = output.split("__RMV_DONE__").next().unwrap_or("").trim();
+    let done_part = output
+        .split("__RMV_DONE__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_ALIVE__")
+        .next()
+        .unwrap_or("")
+        .trim();
+    let alive_part = output
+        .split("__RMV_ALIVE__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_SU__")
+        .next()
+        .unwrap_or("")
+        .trim();
+    let su_part = output
+        .split("__RMV_SU__")
+        .nth(1)
+        .unwrap_or("")
+        .split("__RMV_END__")
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    let attempt = ATTEMPT_RE
+        .captures(tail_part)
+        .and_then(|caps| caps.get(1))
+        .and_then(|m| m.as_str().parse().ok());
+    let outcome = if su_part.contains("uid=0") {
+        ProbeOutcome::Rooted
+    } else if tail_part.contains("boot_poisoned") {
+        ProbeOutcome::BootPoisoned
+    } else if done_part.contains('1') || done_part.contains("RMV_DONE") {
+        ProbeOutcome::DoneSuccess
+    } else if done_part.contains('0') {
+        ProbeOutcome::DoneFailed
+    } else if !alive_part.is_empty() {
+        ProbeOutcome::DaemonAlive
+    } else {
+        ProbeOutcome::DaemonExited
+    };
+
+    ExploitProbeResult {
+        log_tail: tail_part.to_string(),
+        attempt,
+        outcome,
+    }
+}
+
+async fn refresh_boot_id<T: Transport>(transport: &T, device: &mut DeviceInfo) {
+    if let Ok(out) = transport
+        .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
+        .await
+    {
+        let cur = out.stdout.trim();
+        if out.success() && !cur.is_empty() {
+            device.boot_id = cur.to_string();
+        }
+    }
+}
+
+async fn launch_exploit<T: Transport>(
+    transport: &T,
+    options: &EngineOptions,
+    remote_dir: &str,
+    remote_so: &str,
+) -> Result<()> {
+    let _ = transport
+        .exec("pkill -9 -x true 2>/dev/null; rm -f /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE /data/local/tmp/rmv/live.log")
+        .await;
+    let run_cmd = format!(
+        "cd {} && (RMV_HOME={} RMV_ATTEMPTS={} RMV_RETRY_DELAY={} LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 &)",
+        sh_quote(remote_dir),
+        sh_quote(remote_dir),
+        sh_quote(&options.attempts.to_string()),
+        sh_quote(&options.retry_delay.to_string()),
+        sh_quote(remote_so)
+    );
+    transport.exec(&run_cmd).await?;
+    Ok(())
+}
+
+fn handle_probe_logs(
+    probe: &ExploitProbeResult,
+    last_log_tail: &mut String,
+    last_attempt: &mut Option<u32>,
+    max_attempts: u32,
+    event_tx: &UnboundedSender<EngineEvent>,
+    captured_logs: &mut Vec<String>,
+) {
+    if !probe.log_tail.is_empty() && probe.log_tail != *last_log_tail {
+        last_log_tail.clone_from(&probe.log_tail);
+        if let Some(att) = probe.attempt {
+            *last_attempt = Some(att);
+        }
+        let lines: Vec<String> = probe
+            .log_tail
+            .lines()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for l in &lines {
+            append_captured_log(captured_logs, l);
+        }
+        let _ = event_tx.send(EngineEvent::ExploitLive {
+            attempt: *last_attempt,
+            max: Some(max_attempts),
+            lines,
+        });
+    }
+}
+
+async fn wait_boot_completed<T: Transport>(transport: &T, event_tx: &UnboundedSender<EngineEvent>) {
+    if let Ok(out) = transport.exec("getprop sys.boot_completed").await {
+        if !out.success() || out.stdout.trim() != "1" {
+            let _ = event_tx.send(EngineEvent::Log {
+                level: LogLevel::Info,
+                line: t!("log.waiting_boot_complete").to_string(),
+            });
+            let boot_deadline = std::time::Instant::now();
+            while boot_deadline.elapsed() < Duration::from_secs(120) {
+                sleep(Duration::from_secs(2)).await;
+                if let Ok(o) = transport.exec("getprop sys.boot_completed").await {
+                    if o.success() && o.stdout.trim() == "1" {
+                        break;
+                    }
+                }
+            }
+            sleep(Duration::from_secs(4)).await;
+        }
+    }
+}
+
+async fn check_su_polling<T: Transport>(transport: &T) -> bool {
+    for _ in 0..10 {
+        let su_exec = transport
+            .exec("RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null || /system/bin/su -c id 2>/dev/null")
+            .await;
+        let su_check = su_exec.map(|o| o.combined()).unwrap_or_default();
+        if su_check.contains("uid=0") {
+            return true;
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
+    false
+}
+
+struct ExploitFailureState {
+    pub boot_poisoned: bool,
+    pub attempts_exhausted: bool,
+    pub process_exited: bool,
+    pub max_attempts: u32,
+    pub last_log_tail: String,
+}
+
+async fn classify_failure<T: Transport>(
+    transport: &T,
+    last_attempt: Option<u32>,
+    state: &ExploitFailureState,
+    event_tx: &UnboundedSender<EngineEvent>,
+    captured_logs: &mut Vec<String>,
+) -> Result<()> {
+    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+    if let Ok(log_exec) = transport
+        .exec("cat /data/local/tmp/rmv/live.log 2>/dev/null")
+        .await
+    {
+        for line in log_exec.combined().lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                append_captured_log(captured_logs, trimmed);
+            }
+        }
+    }
+    let _ = transport
+        .exec("pkill -9 -x true 2>/dev/null; pkill -f preload.so 2>/dev/null")
+        .await;
+    let _ = Persistence::clean_traces(transport).await;
+
+    if state.boot_poisoned {
+        let _ = event_tx.send(EngineEvent::Log {
+            level: LogLevel::Error,
+            line: t!("log.boot_poisoned").to_string(),
+        });
+        return Err(RmvError::BootPoisoned);
+    }
+
+    if state.attempts_exhausted {
+        let count = last_attempt.unwrap_or(state.max_attempts);
+        let err_msg = t!(
+            "error.exploit_attempts_exhausted",
+            count = count.to_string()
+        )
+        .to_string();
+        let _ = event_tx.send(EngineEvent::Log {
+            level: LogLevel::Error,
+            line: err_msg.clone(),
+        });
+        return Err(RmvError::ExploitFailed(err_msg));
+    }
+
+    if state.process_exited {
+        let err_msg = t!("error.exploit_process_exited").to_string();
+        return Err(RmvError::ExploitFailed(err_msg));
+    }
+
+    Err(RmvError::ExploitTimeout {
+        last_attempt,
+        log_tail: state.last_log_tail.clone(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_probe_cmd() {
+        let cmd = build_probe_cmd("/data/local/tmp/rmv");
+        assert!(cmd.contains("/data/local/tmp/rmv/live.log"));
+        assert!(cmd.contains("__RMV_DONE__"));
+        assert!(cmd.contains("__RMV_ALIVE__"));
+        assert!(cmd.contains("__RMV_SU__"));
+        assert!(cmd.contains("__RMV_END__"));
+    }
+
+    #[test]
+    fn test_parse_probe_output_normal() {
+        let sample = "\
+rmv exploit attempt 3/24
+[+] scanning offsets
+__RMV_DONE__
+0
+__RMV_ALIVE__
+12345
+__RMV_SU__
+uid=2000(shell) gid=2000(shell)
+__RMV_END__
+";
+        let res = parse_probe_output(sample);
+        assert_eq!(res.attempt, Some(3));
+        assert_eq!(res.outcome, ProbeOutcome::DoneFailed);
+    }
+
+    #[test]
+    fn test_parse_probe_output_root_success() {
+        let sample = "\
+rmv exploit attempt 7/24
+[+] kernel patched!
+__RMV_DONE__
+1
+__RMV_ALIVE__
+12345
+__RMV_SU__
+uid=0(root) gid=0(root) groups=0(root)
+__RMV_END__
+";
+        let res = parse_probe_output(sample);
+        assert_eq!(res.attempt, Some(7));
+        assert_eq!(res.outcome, ProbeOutcome::Rooted);
+    }
+
+    #[test]
+    fn test_parse_probe_output_sentinels_and_poisoned() {
+        let sample = "\
+rmv exploit attempt 1/24
+[-] boot_poisoned detected
+__RMV_DONE__
+RMV_DONE
+__RMV_ALIVE__
+
+__RMV_SU__
+
+__RMV_END__
+";
+        let res = parse_probe_output(sample);
+        assert_eq!(res.attempt, Some(1));
+        assert_eq!(res.outcome, ProbeOutcome::BootPoisoned);
     }
 }

@@ -1,20 +1,28 @@
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::error::Result;
 
+/// Default public GitHub release download proxy mirrors.
 pub const DEFAULT_GITHUB_MIRRORS: &[&str] = &[
     "https://ghproxy.net/",
     "https://gh-proxy.com/",
     "https://hub.gitmirror.com/",
 ];
 
+/// Persistent GitHub mirror configuration manager.
 pub struct MirrorConfig;
 
 impl MirrorConfig {
+    /// Returns the mirror config file path.
+    #[must_use]
     pub fn config_path() -> PathBuf {
         crate::paths::mirror_config_file()
     }
 
+    /// Reads saved custom mirror URL from configuration file if present.
+    #[must_use]
     pub fn get_saved_mirror() -> Option<String> {
         let path = Self::config_path();
         std::fs::read_to_string(path)
@@ -23,6 +31,10 @@ impl MirrorConfig {
             .filter(|s| !s.is_empty())
     }
 
+    /// Persists custom mirror URL to configuration file.
+    ///
+    /// # Errors
+    /// Returns an error if filesystem directory creation or file write fails.
     pub fn set_saved_mirror(mirror: &str) -> Result<()> {
         let path = Self::config_path();
         if let Some(parent) = path.parent() {
@@ -32,6 +44,10 @@ impl MirrorConfig {
         Ok(())
     }
 
+    /// Resets custom mirror configuration by deleting config file.
+    ///
+    /// # Errors
+    /// Returns an error if file deletion fails.
     pub fn reset_saved_mirror() -> Result<bool> {
         let path = Self::config_path();
         if path.exists() {
@@ -42,6 +58,8 @@ impl MirrorConfig {
         }
     }
 
+    /// Applies a mirror prefix to a raw download URL.
+    #[must_use]
     pub fn apply_mirror(raw_url: &str, mirror_prefix: &str) -> String {
         let trimmed_prefix = mirror_prefix.trim();
         let trimmed_url = raw_url.trim();
@@ -56,12 +74,14 @@ impl MirrorConfig {
         let prefix = if trimmed_prefix.ends_with('/') {
             trimmed_prefix.to_string()
         } else {
-            format!("{}/", trimmed_prefix)
+            format!("{trimmed_prefix}/")
         };
 
-        format!("{}{}", prefix, trimmed_url)
+        format!("{prefix}{trimmed_url}")
     }
 
+    /// Resolves list of mirror URLs for payload downloads.
+    #[must_use]
     pub fn resolve_mirror_urls(raw_url: &str, cli_override: Option<&str>) -> Vec<String> {
         let raw = raw_url.trim();
 
@@ -106,6 +126,8 @@ impl MirrorConfig {
         urls
     }
 
+    /// Resolves list of mirror URLs for manager APK downloads, prioritizing official source.
+    #[must_use]
     pub fn resolve_manager_urls(raw_url: &str, cli_override: Option<&str>) -> Vec<String> {
         let raw = raw_url.trim();
 
@@ -150,6 +172,7 @@ impl MirrorConfig {
         urls
     }
 
+    /// Probes a list of URLs concurrently and returns the index and URL of the fastest responder.
     pub async fn probe_fastest(
         client: &reqwest::Client,
         urls: &[String],
@@ -160,9 +183,6 @@ impl MirrorConfig {
         if urls.len() == 1 {
             return Some((0, urls[0].clone()));
         }
-
-        use futures_util::stream::{FuturesUnordered, StreamExt};
-        use std::time::Duration;
 
         let mut tasks = FuturesUnordered::new();
         for (idx, url) in urls.iter().enumerate() {

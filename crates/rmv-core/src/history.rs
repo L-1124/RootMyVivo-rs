@@ -5,19 +5,27 @@ use tokio::fs;
 
 use crate::error::Result;
 
+/// Maximum number of historical execution logs retained.
 pub const MAX_HISTORY_RECORDS: usize = 50;
 
+/// Categorical execution outcome status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 #[non_exhaustive]
 pub enum RunStatus {
+    /// Complete exploit and `KernelSU` loading success.
     Pass,
+    /// Temporary root success but skipped or failed `KernelSU`.
     Partial,
+    /// Exploit failed to achieve root.
     Fail,
+    /// Exploit is currently in progress.
     Running,
 }
 
 impl RunStatus {
+    /// Returns the uppercase string representation of the status.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pass => "PASS",
@@ -28,24 +36,38 @@ impl RunStatus {
     }
 }
 
+/// Serialized execution history log record.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunRecord {
+    /// Unique run identifier.
     pub id: String,
+    /// ISO-like timestamp string.
     pub timestamp: String,
+    /// Target device marketing model name.
     pub device_model: String,
+    /// Target device internal board code.
     pub device_code: String,
+    /// Full kernel release version string.
     pub kernel: String,
+    /// Applied exploit payload path or name.
     pub payload: String,
+    /// Configured `KernelSU` variant.
     pub ksu_variant: String,
+    /// Backward-compatible boolean success indicator.
     pub success: bool,
+    /// Strongly-typed run status.
     #[serde(default)]
     pub status: Option<RunStatus>,
+    /// Terminal outcome or failure explanation.
     pub message: String,
+    /// Captured console output lines.
     #[serde(default)]
     pub logs: Vec<String>,
 }
 
 impl RunRecord {
+    /// Resolves the effective run status, falling back to legacy `success` flag if `status` is absent.
+    #[must_use]
     pub fn resolved_status(&self) -> RunStatus {
         if let Some(s) = self.status {
             s
@@ -57,13 +79,20 @@ impl RunRecord {
     }
 }
 
+/// Persistent execution history file manager.
 pub struct HistoryManager;
 
 impl HistoryManager {
+    /// Returns default history directory path.
+    #[must_use]
     pub fn default_dir() -> PathBuf {
         crate::paths::history_dir()
     }
 
+    /// Saves a run record JSON file and prunes records exceeding capacity.
+    ///
+    /// # Errors
+    /// Returns an error if filesystem directory creation or write fails.
     pub async fn save_record(dir: &Path, record: &RunRecord) -> Result<PathBuf> {
         fs::create_dir_all(dir).await?;
         let filename = format!(
@@ -81,6 +110,10 @@ impl HistoryManager {
         Ok(path)
     }
 
+    /// Lists all historical run records sorted newest-first.
+    ///
+    /// # Errors
+    /// Returns an error if directory read fails.
     pub async fn list_records(dir: &Path) -> Result<Vec<RunRecord>> {
         if !dir.exists() {
             return Ok(Vec::new());
@@ -104,6 +137,10 @@ impl HistoryManager {
         Ok(records)
     }
 
+    /// Retrieves a single record by exact ID or prefix.
+    ///
+    /// # Errors
+    /// Returns an error if reading history directory fails.
     pub async fn get_record(dir: &Path, id: &str) -> Result<Option<RunRecord>> {
         let records = Self::list_records(dir).await?;
         let target = id.to_lowercase();
@@ -116,6 +153,10 @@ impl HistoryManager {
         Ok(None)
     }
 
+    /// Prunes older records keeping at most `max_keep` latest entries.
+    ///
+    /// # Errors
+    /// Returns an error if reading history directory fails.
     pub async fn prune_records(dir: &Path, max_keep: usize) -> Result<usize> {
         if !dir.exists() {
             return Ok(0);
@@ -152,6 +193,10 @@ impl HistoryManager {
         Ok(removed)
     }
 
+    /// Deletes all history records from the given directory.
+    ///
+    /// # Errors
+    /// Returns an error if reading history directory fails.
     pub async fn clear_records(dir: &Path) -> Result<usize> {
         if !dir.exists() {
             return Ok(0);
@@ -172,6 +217,8 @@ impl HistoryManager {
         Ok(count)
     }
 
+    /// Returns current formatted timestamp.
+    #[must_use]
     pub fn current_timestamp() -> String {
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -180,6 +227,8 @@ impl HistoryManager {
         format_epoch_seconds(secs)
     }
 
+    /// Generates a random alphanumeric record ID.
+    #[must_use]
     pub fn new_record_id() -> String {
         let duration = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -189,16 +238,19 @@ impl HistoryManager {
     }
 }
 
+/// Formats Unix epoch seconds into an ISO-like UTC timestamp string (`YYYY-MM-DD HH:MM:SS`).
+#[must_use]
 pub fn format_epoch_seconds(epoch_secs: u64) -> String {
     let secs = epoch_secs % 60;
     let mins = (epoch_secs / 60) % 60;
     let hours = (epoch_secs / 3600) % 24;
-    let mut days = (epoch_secs / 86400) as i64;
+    let mut days = epoch_secs / 86400;
 
-    let mut year = 1970;
+    let mut year = 1970u32;
     loop {
-        let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
-        let days_in_year = if leap { 366 } else { 365 };
+        let leap =
+            (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
+        let days_in_year: u64 = if leap { 366 } else { 365 };
         if days >= days_in_year {
             days -= days_in_year;
             year += 1;
@@ -207,7 +259,7 @@ pub fn format_epoch_seconds(epoch_secs: u64) -> String {
         }
     }
 
-    let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    let leap = (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400);
     let month_days = [
         31,
         if leap { 29 } else { 28 },
@@ -234,10 +286,7 @@ pub fn format_epoch_seconds(epoch_secs: u64) -> String {
     }
     let day = days + 1;
 
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-        year, month, day, hours, mins, secs
-    )
+    format!("{year:04}-{month:02}-{day:02} {hours:02}:{mins:02}:{secs:02}")
 }
 
 #[cfg(test)]

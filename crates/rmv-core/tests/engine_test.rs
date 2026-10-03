@@ -1,4 +1,5 @@
-#![allow(unused_crate_dependencies)]
+//! Engine integration regression tests under paused Tokio time.
+#![allow(unused_crate_dependencies, clippy::expect_used, clippy::unwrap_used)]
 // 集成测试 target 不使用库的链接期依赖，该 lint 在此语义不成立。
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -21,7 +22,7 @@ fn make_temp_dir(tag: &str) -> PathBuf {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("rmv_engine_test_{}_{}", tag, nanos));
+    let dir = std::env::temp_dir().join(format!("rmv_engine_test_{tag}_{nanos}"));
     let _ = std::fs::create_dir_all(&dir);
     dir
 }
@@ -30,7 +31,7 @@ fn setup_base_mock_device(transport: &MockTransport, proc_version: &str) {
     transport.add_success_rule("getprop ro.product.model", "V2408A\n");
     transport.add_success_rule("getprop ro.product.device", "pd2408\n");
     transport.add_success_rule("getprop ro.product.brand", "vivo\n");
-    transport.add_success_rule("cat /proc/version", format!("{}\n", proc_version));
+    transport.add_success_rule("cat /proc/version", format!("{proc_version}\n"));
     transport.add_success_rule(
         "cat /proc/sys/kernel/random/boot_id",
         "mock-boot-id-12345678\n",
@@ -63,7 +64,7 @@ async fn test_gate_rejection_patched() {
         RmvError::UnsupportedKernel { version, .. } => {
             assert_eq!(version, "6.6.140");
         }
-        err => panic!("Unexpected error type: {:?}", err),
+        err => panic!("Unexpected error type: {err:?}"),
     }
 
     let mut got_failed = false;
@@ -114,7 +115,7 @@ async fn test_exploit_timeout_aborts() {
         RmvError::ExploitTimeout { last_attempt, .. } => {
             assert_eq!(last_attempt, Some(1));
         }
-        err => panic!("Expected ExploitTimeout, got {:?}", err),
+        err => panic!("Expected ExploitTimeout, got {err:?}"),
     }
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
@@ -156,11 +157,10 @@ async fn test_exploit_early_exit() {
                 msg.contains("exploit_process_exited")
                     || msg.contains("退出")
                     || msg.contains("exited"),
-                "Message was: {}",
-                msg
+                "Message was: {msg}"
             );
         }
-        err => panic!("Expected ExploitFailed, got {:?}", err),
+        err => panic!("Expected ExploitFailed, got {err:?}"),
     }
 
     let cmds = transport.executed();
@@ -307,11 +307,10 @@ async fn test_custom_payload_missing() {
                 msg.contains("nonexistent_payload_12345.so")
                     || msg.contains("not found")
                     || msg.contains("不存在"),
-                "Message was: {}",
-                msg
+                "Message was: {msg}"
             );
         }
-        err => panic!("Expected ExploitFailed, got {:?}", err),
+        err => panic!("Expected ExploitFailed, got {err:?}"),
     }
 
     assert!(transport.pushed().is_empty());

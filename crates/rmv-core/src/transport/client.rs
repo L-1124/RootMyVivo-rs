@@ -7,13 +7,18 @@ use std::path::Path;
 use crate::error::{Result, RmvError};
 use crate::transport::{ExecOutput, Transport};
 
+/// Pure-Rust ADB `SmartSocket` client transport implementation.
 #[derive(Debug, Clone)]
 pub struct AdbClientTransport {
+    /// Optional target device serial identifier.
     pub serial: Option<String>,
+    /// Optional ADB server socket address override.
     pub server_addr: Option<SocketAddrV4>,
 }
 
 impl AdbClientTransport {
+    /// Creates a new pure-Rust ADB client transport.
+    #[must_use]
     pub fn new(serial: Option<String>, server_addr: Option<SocketAddrV4>) -> Self {
         Self {
             serial,
@@ -55,7 +60,7 @@ impl Transport for AdbClientTransport {
         })
         .await
         .map_err(|e| RmvError::Adb {
-            message: format!("Task execution failed: {}", e),
+            message: format!("Task execution failed: {e}"),
             code: None,
         })?
     }
@@ -67,14 +72,14 @@ impl Transport for AdbClientTransport {
         tokio::task::spawn_blocking(move || {
             let mut file = std::fs::File::open(&local).map_err(RmvError::Io)?;
             dev.push(&mut file, &remote).map_err(|e| RmvError::Adb {
-                message: format!("Failed to push to {}: {}", remote, e),
+                message: format!("Failed to push to {remote}: {e}"),
                 code: None,
             })?;
             Ok(())
         })
         .await
         .map_err(|e| RmvError::Adb {
-            message: format!("Task join failed: {}", e),
+            message: format!("Task join failed: {e}"),
             code: None,
         })?
     }
@@ -86,14 +91,14 @@ impl Transport for AdbClientTransport {
         tokio::task::spawn_blocking(move || {
             let mut file = std::fs::File::create(&local).map_err(RmvError::Io)?;
             dev.pull(&remote, &mut file).map_err(|e| RmvError::Adb {
-                message: format!("Failed to pull {}: {}", remote, e),
+                message: format!("Failed to pull {remote}: {e}"),
                 code: None,
             })?;
             Ok(())
         })
         .await
         .map_err(|e| RmvError::Adb {
-            message: format!("Task join failed: {}", e),
+            message: format!("Task join failed: {e}"),
             code: None,
         })?
     }
@@ -105,7 +110,7 @@ impl Transport for AdbClientTransport {
         tokio::task::spawn_blocking(move || {
             let mut cursor = std::io::Cursor::new(data);
             dev.push(&mut cursor, &remote).map_err(|e| RmvError::Adb {
-                message: format!("Failed to push bytes to {}: {}", remote, e),
+                message: format!("Failed to push bytes to {remote}: {e}"),
                 code: None,
             })?;
             let chmod_cmd = format!("chmod {:o} {}", mode, crate::quote::sh_quote(&remote));
@@ -114,7 +119,7 @@ impl Transport for AdbClientTransport {
         })
         .await
         .map_err(|e| RmvError::Adb {
-            message: format!("Task join failed: {}", e),
+            message: format!("Task join failed: {e}"),
             code: None,
         })?
     }
@@ -125,14 +130,14 @@ impl Transport for AdbClientTransport {
         tokio::task::spawn_blocking(move || {
             let mut output = Vec::new();
             dev.pull(&remote, &mut output).map_err(|e| RmvError::Adb {
-                message: format!("Failed to pull bytes from {}: {}", remote, e),
+                message: format!("Failed to pull bytes from {remote}: {e}"),
                 code: None,
             })?;
             Ok(output)
         })
         .await
         .map_err(|e| RmvError::Adb {
-            message: format!("Task join failed: {}", e),
+            message: format!("Task join failed: {e}"),
             code: None,
         })?
     }

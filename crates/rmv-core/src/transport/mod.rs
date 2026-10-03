@@ -1,6 +1,10 @@
+/// ADB CLI subprocess transport.
 pub mod adb;
+/// Transport builder and multi-device resolver.
 pub mod builder;
+/// Pure-Rust ADB `SmartSocket` client transport.
 pub mod client;
+/// Android Wireless Debugging mDNS discovery.
 pub mod mdns;
 
 use crate::device::DeviceInfo;
@@ -16,14 +20,20 @@ pub use builder::{TransportBuilder, TransportMode};
 pub use client::AdbClientTransport;
 pub use mdns::{AdbMdnsDiscovery, AdbServiceKind, DiscoveredAdbService};
 
+/// Standardized execution result containing exit code and streams.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecOutput {
+    /// Optional exit status code returned by the remote shell.
     pub code: Option<i32>,
+    /// Standard output stream captured from the command.
     pub stdout: String,
+    /// Standard error stream captured from the command.
     pub stderr: String,
 }
 
 impl ExecOutput {
+    /// Returns combined stdout and stderr representation.
+    #[must_use]
     pub fn combined(&self) -> String {
         if self.stderr.is_empty() {
             self.stdout.clone()
@@ -34,23 +44,37 @@ impl ExecOutput {
         }
     }
 
+    /// Returns true if the exit status code indicates success (0).
+    #[must_use]
     pub fn success(&self) -> bool {
         self.code == Some(0)
     }
 }
 
+/// Core communication trait for executing commands and transferring files.
 #[async_trait]
 pub trait Transport: Send + Sync {
+    /// Executes a shell command on the remote device.
     async fn exec(&self, cmd: &str) -> Result<ExecOutput>;
+    /// Pushes a local file to a remote path on the device.
     async fn push(&self, local_path: &Path, remote_path: &str) -> Result<()>;
+    /// Pulls a remote file from the device to a local path.
     async fn pull(&self, remote_path: &str, local_path: &Path) -> Result<()>;
+    /// Pushes raw bytes to a remote path with the specified permission bits.
     async fn push_bytes(&self, data: &[u8], remote_path: &str, mode: u32) -> Result<()>;
+    /// Pulls raw bytes from a remote path on the device.
     async fn pull_bytes(&self, remote_path: &str) -> Result<Vec<u8>>;
+    /// Verifies if the device connection is responsive.
     async fn is_alive(&self) -> bool;
 }
 
-#[expect(async_fn_in_trait)]
+/// Extension trait providing high-level device inspection and lifecycle operations.
+#[expect(
+    async_fn_in_trait,
+    reason = "Only consumed through generic bounds; every implementor is Send + Sync"
+)]
 pub trait TransportExt: Transport {
+    /// Inspects and parses device metadata from system properties and `/proc/version`.
     async fn get_device_info(&self) -> Result<DeviceInfo> {
         if !self.is_alive().await {
             return Err(RmvError::DeviceNotFound(
@@ -79,6 +103,7 @@ pub trait TransportExt: Transport {
         )
     }
 
+    /// Reboots the device and awaits boot completion within `timeout_secs`.
     async fn reboot_and_wait(&self, timeout_secs: u64) -> Result<()> {
         let initial_boot_id = self
             .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")

@@ -1,6 +1,6 @@
 use super::resolve_transport;
 use anyhow::{Context, Result};
-use colored::*;
+use colored::Colorize;
 use rmv_core::{CleanOutcome, Persistence, TransportMode};
 use rust_i18n::t;
 

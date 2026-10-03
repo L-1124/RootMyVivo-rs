@@ -1,8 +1,8 @@
 use anyhow::Result;
-use colored::*;
+use colored::Colorize;
 use rust_i18n::t;
 
-pub async fn run_config_set_mirror(mirror: &str) -> Result<()> {
+pub fn run_config_set_mirror(mirror: &str) -> Result<()> {
     rmv_core::MirrorConfig::set_saved_mirror(mirror)?;
     println!(
         "{} {}",
@@ -12,7 +12,7 @@ pub async fn run_config_set_mirror(mirror: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_config_get_mirror() -> Result<()> {
+pub fn run_config_get_mirror() {
     println!("\n{}", t!("cli.config_mirror_title").cyan().bold());
     let saved = rmv_core::MirrorConfig::get_saved_mirror();
     let current = saved.as_deref().unwrap_or("Default (direct + mirrors)");
@@ -22,10 +22,9 @@ pub async fn run_config_get_mirror() -> Result<()> {
         current.green().bold()
     );
     println!();
-    Ok(())
 }
 
-pub async fn run_config_reset_mirror() -> Result<()> {
+pub fn run_config_reset_mirror() -> Result<()> {
     if rmv_core::MirrorConfig::reset_saved_mirror()? {
         println!(
             "{} {}",

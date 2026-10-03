@@ -36,16 +36,24 @@ async fn run_cmd_with_timeout(
     }
 }
 
+/// ADB command-line subprocess transport implementation.
 #[derive(Debug, Clone)]
 pub struct AdbCliTransport {
+    /// Optional target device serial number.
     pub serial: Option<String>,
 }
 
 impl AdbCliTransport {
+    /// Creates a new transport instance bound to an optional device serial.
+    #[must_use]
     pub fn new(serial: Option<String>) -> Self {
         Self { serial }
     }
 
+    /// Resolves target device from available connected ADB devices.
+    ///
+    /// # Errors
+    /// Returns an error if multiple devices are connected without a target serial.
     pub async fn resolve(serial: Option<String>) -> Result<Self> {
         if let Some(s) = serial {
             return Ok(Self::new(Some(s)));
@@ -70,6 +78,10 @@ impl AdbCliTransport {
         cmd
     }
 
+    /// Lists connected online ADB devices using `adb devices`.
+    ///
+    /// # Errors
+    /// Returns an error if executing the `adb` subprocess times out or fails.
     pub async fn list_devices() -> Result<Vec<String>> {
         let mut cmd = Command::new("adb");
         cmd.arg("devices");

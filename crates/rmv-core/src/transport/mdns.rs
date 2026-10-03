@@ -4,22 +4,34 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddrV4;
 use std::time::Duration;
 
+/// Kind of discovered ADB network service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AdbServiceKind {
+    /// Wireless pairing service (`_adb-tls-pairing._tcp`).
     Pairing,
+    /// Wireless connect service (`_adb-tls-connect._tcp`).
     Connect,
 }
 
+/// Details of a discovered ADB mDNS network service.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveredAdbService {
+    /// Service instance name.
     pub name: String,
+    /// Resolved IPv4 socket address.
     pub addr: SocketAddrV4,
+    /// Service protocol kind.
     pub kind: AdbServiceKind,
 }
 
+/// mDNS discovery helper for Android Wireless Debugging services.
 pub struct AdbMdnsDiscovery;
 
 impl AdbMdnsDiscovery {
+    /// Discovers a single pairing device on the local network.
+    ///
+    /// # Errors
+    /// Returns an error if multiple pairing devices are found or mDNS fails.
     pub fn discover_single_pairing_device(
         timeout_secs: u64,
     ) -> Result<Option<DiscoveredAdbService>> {
@@ -29,37 +41,38 @@ impl AdbMdnsDiscovery {
             .filter(|s| s.kind == AdbServiceKind::Pairing)
             .collect();
 
-        if pairing_devices.is_empty() {
-            Ok(None)
-        } else if pairing_devices.len() == 1 {
-            Ok(Some(pairing_devices.into_iter().next().unwrap()))
-        } else {
-            Err(RmvError::Adb {
+        match pairing_devices.len() {
+            0 => Ok(None),
+            1 => Ok(pairing_devices.into_iter().next()),
+            count => Err(RmvError::Adb {
                 message: format!(
-                    "Found {} pairing devices, please specify target address explicitly",
-                    pairing_devices.len()
+                    "Found {count} pairing devices, please specify target address explicitly"
                 ),
                 code: None,
-            })
+            }),
         }
     }
 
+    /// Scans the local network for pairing and connect ADB services.
+    ///
+    /// # Errors
+    /// Returns an error if mDNS daemon initialization fails.
     pub fn scan_services(timeout_secs: u64) -> Result<Vec<DiscoveredAdbService>> {
         let mdns = ServiceDaemon::new().map_err(|e| RmvError::Adb {
-            message: format!("Failed to create mDNS daemon: {}", e),
+            message: format!("Failed to create mDNS daemon: {e}"),
             code: None,
         })?;
 
         let pairing_receiver =
             mdns.browse("_adb-tls-pairing._tcp.local.")
                 .map_err(|e| RmvError::Adb {
-                    message: format!("Failed to browse pairing service: {}", e),
+                    message: format!("Failed to browse pairing service: {e}"),
                     code: None,
                 })?;
         let connect_receiver =
             mdns.browse("_adb-tls-connect._tcp.local.")
                 .map_err(|e| RmvError::Adb {
-                    message: format!("Failed to browse connect service: {}", e),
+                    message: format!("Failed to browse connect service: {e}"),
                     code: None,
                 })?;
 

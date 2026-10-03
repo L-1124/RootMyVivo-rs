@@ -1,3 +1,4 @@
+//! `RootMyVivo` command-line interface entry point.
 #![forbid(unsafe_code)]
 use colored::Colorize;
 rust_i18n::i18n!("../rmv-core/locales", fallback = "en");
@@ -157,6 +158,10 @@ enum ManagerAction {
 }
 
 #[derive(Subcommand)]
+#[expect(
+    clippy::enum_variant_names,
+    reason = "Clap subcommand naming conventions"
+)]
 enum ConfigAction {
     SetMirror {
         #[arg(value_name = "URL")]
@@ -351,6 +356,10 @@ fn localize_command(mut cmd: clap::Command) -> clap::Command {
     cmd
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Central CLI argument dispatcher and top-level error boundary"
+)]
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     ui::init_tracing();
@@ -392,9 +401,12 @@ async fn main() -> std::process::ExitCode {
             catalog_url,
             action,
         } => match action {
-            Some(CatalogAction::Show) => commands::run_catalog_show().await,
-            Some(CatalogAction::Set { url }) => commands::run_catalog_set(&url).await,
-            Some(CatalogAction::Reset) => commands::run_catalog_reset().await,
+            Some(CatalogAction::Show) => {
+                commands::run_catalog_show();
+                Ok(())
+            }
+            Some(CatalogAction::Set { url }) => commands::run_catalog_set(&url),
+            Some(CatalogAction::Reset) => commands::run_catalog_reset(),
             Some(CatalogAction::List) | None => {
                 commands::run_catalog(cli.serial, catalog_url, transport_mode).await
             }
@@ -445,15 +457,21 @@ async fn main() -> std::process::ExitCode {
                 version,
                 mirror,
             } => commands::run_manager_download(ksu, version, mirror).await,
-            ManagerAction::List => commands::run_manager_list().await,
+            ManagerAction::List => {
+                commands::run_manager_list();
+                Ok(())
+            }
             ManagerAction::Install { ksu } => {
                 commands::run_manager_install(cli.serial, ksu, transport_mode).await
             }
         },
         Commands::Config { action } => match action {
-            ConfigAction::SetMirror { mirror } => commands::run_config_set_mirror(&mirror).await,
-            ConfigAction::GetMirror => commands::run_config_get_mirror().await,
-            ConfigAction::ResetMirror => commands::run_config_reset_mirror().await,
+            ConfigAction::SetMirror { mirror } => commands::run_config_set_mirror(&mirror),
+            ConfigAction::GetMirror => {
+                commands::run_config_get_mirror();
+                Ok(())
+            }
+            ConfigAction::ResetMirror => commands::run_config_reset_mirror(),
         },
         Commands::Clean => commands::run_clean(cli.serial, transport_mode).await,
         Commands::Pair { list, addr, code } => commands::run_pair(list, addr, code).await,
@@ -486,6 +504,7 @@ async fn main() -> std::process::ExitCode {
     std::process::ExitCode::SUCCESS
 }
 
+#[cfg_attr(test, allow(clippy::expect_used))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,9 +513,7 @@ mod tests {
         for &(arg_id, _) in args {
             assert!(
                 cmd.get_arguments().any(|a| a.get_id() == arg_id),
-                "Argument '{}' not found in {}",
-                arg_id,
-                ctx
+                "Argument '{arg_id}' not found in {ctx}"
             );
         }
     }
@@ -505,9 +522,7 @@ mod tests {
         for &(sub_name, _) in subcmds {
             assert!(
                 cmd.get_subcommands().any(|s| s.get_name() == sub_name),
-                "Subcommand '{}' not found in {}",
-                sub_name,
-                ctx
+                "Subcommand '{sub_name}' not found in {ctx}"
             );
         }
     }

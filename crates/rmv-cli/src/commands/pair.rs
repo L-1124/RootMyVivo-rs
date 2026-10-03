@@ -1,58 +1,16 @@
 use anyhow::Result;
-use colored::*;
+use colored::Colorize;
 use rust_i18n::t;
 
 pub async fn run_pair(list: bool, addr: Option<String>, code: Option<String>) -> Result<()> {
     if list {
-        println!("{} {}", "[ .. ]".cyan(), t!("cli.pairing_scanning"));
-        let services = tokio::task::spawn_blocking(|| rmv_core::AdbMdnsDiscovery::scan_services(3))
-            .await
-            .map_err(|e| anyhow::anyhow!("mDNS scan task failed: {e}"))??;
-        if services.is_empty() {
-            println!(
-                "{} {}",
-                "[warn]".yellow().bold(),
-                t!("cli.pairing_no_devices")
-            );
-            return Ok(());
-        }
-        println!(
-            "{} {}",
-            "[ ok ]".green().bold(),
-            t!(
-                "cli.pairing_found_count",
-                count = services.len().to_string()
-            )
-            .bold()
-        );
-        let prog = std::env::args().next().unwrap_or_else(|| "rmv".to_string());
-        for (i, svc) in services.iter().enumerate() {
-            let (tag, hint) = match svc.kind {
-                rmv_core::AdbServiceKind::Pairing => (
-                    t!("cli.pairing_kind_pairing").yellow().bold(),
-                    t!("cli.pairing_hint_pairing", prog = &prog).dimmed(),
-                ),
-                rmv_core::AdbServiceKind::Connect => (
-                    t!("cli.pairing_kind_connect").green().bold(),
-                    t!("cli.pairing_hint_connect", prog = &prog).dimmed(),
-                ),
-            };
-            println!(
-                "       {}. [{}] {} -> {}  {}",
-                i + 1,
-                tag,
-                svc.name.cyan(),
-                svc.addr.to_string().white().bold(),
-                hint
-            );
-        }
-        return Ok(());
+        return run_pair_list().await;
     }
 
     let (socket_addr, target_code) = match (addr, code) {
         (Some(a), Some(c)) => {
             let parsed: std::net::SocketAddrV4 = a.parse().map_err(|e| {
-                anyhow::anyhow!("Invalid IP:Port format (e.g. 192.168.1.50:37123): {}", e)
+                anyhow::anyhow!("Invalid IP:Port format (e.g. 192.168.1.50:37123): {e}")
             })?;
             (parsed, c)
         }
@@ -92,6 +50,60 @@ pub async fn run_pair(list: bool, addr: Option<String>, code: Option<String>) ->
         }
     };
 
+    run_pair_connect(socket_addr, target_code)
+}
+
+async fn run_pair_list() -> Result<()> {
+    println!("{} {}", "[ .. ]".cyan(), t!("cli.pairing_scanning"));
+    let services = tokio::task::spawn_blocking(|| rmv_core::AdbMdnsDiscovery::scan_services(3))
+        .await
+        .map_err(|e| anyhow::anyhow!("mDNS scan task failed: {e}"))??;
+    if services.is_empty() {
+        println!(
+            "{} {}",
+            "[warn]".yellow().bold(),
+            t!("cli.pairing_no_devices").yellow()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "\n{}",
+        t!(
+            "cli.pairing_found_count",
+            count = services.len().to_string()
+        )
+        .bold()
+        .cyan()
+    );
+    println!("{}", "-".repeat(60).cyan());
+
+    let prog = std::env::args().next().unwrap_or_else(|| "rmv".to_string());
+    for (i, svc) in services.iter().enumerate() {
+        let (tag, hint) = match svc.kind {
+            rmv_core::AdbServiceKind::Pairing => (
+                t!("cli.pairing_kind_pairing").yellow().bold(),
+                t!("cli.pairing_hint_pairing", prog = prog).dimmed(),
+            ),
+            rmv_core::AdbServiceKind::Connect => (
+                t!("cli.pairing_kind_connect").green().bold(),
+                t!("cli.pairing_hint_connect", prog = prog).dimmed(),
+            ),
+        };
+        println!(
+            "  [{}] {} {} ({})",
+            i + 1,
+            tag,
+            svc.name.cyan(),
+            svc.addr.to_string().yellow()
+        );
+        println!("      {hint}");
+    }
+    println!("{}\n", "-".repeat(60).cyan());
+    Ok(())
+}
+
+fn run_pair_connect(socket_addr: std::net::SocketAddrV4, target_code: String) -> Result<()> {
     println!(
         "{} {}",
         "[ .. ]".cyan(),
@@ -101,7 +113,7 @@ pub async fn run_pair(list: bool, addr: Option<String>, code: Option<String>) ->
     let mut server = rmv_core::ADBServer::default();
     server
         .pair(socket_addr, target_code)
-        .map_err(|e| anyhow::anyhow!("Pairing failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("{}: {e}", t!("error.pairing_failed")))?;
 
     println!(
         "{} {}",

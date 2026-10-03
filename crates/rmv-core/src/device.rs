@@ -4,26 +4,45 @@ use regex::Regex;
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 
+/// Parsed hardware and kernel metadata for target device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceInfo {
+    /// Marketing model name (e.g. `V2324A`).
     pub model: String,
+    /// Internal board device code (e.g. `PD2324`).
     pub device: String,
+    /// Device manufacturer brand (e.g. `vivo` or `iQOO`).
     pub brand: String,
+    /// Full raw `/proc/version` banner.
     pub kernel_full: String,
+    /// Parsed semantic kernel version `(major, minor, patch)`.
     pub kernel_version: (u32, u32, u32),
+    /// GKI git commit hash identifier if present.
     pub gki_git_id: Option<String>,
+    /// ABOGKI Android kernel fingerprint if present.
     pub abogki_fingerprint: Option<String>,
+    /// Unique kernel random boot session ID.
     pub boot_id: String,
 }
 
+/// Vulnerability assessment status for CVE-2026-43499.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum GateStatus {
+    /// Kernel version is vulnerable and supported.
     Vulnerable,
-    Patched { version: String, reason: String },
+    /// Kernel version is patched against the vulnerability.
+    Patched {
+        /// Detected kernel release version.
+        version: String,
+        /// Patch rationale or CVE reference.
+        reason: String,
+    },
+    /// Kernel version falls outside the target vulnerability range.
     UnsupportedVersion(String),
 }
 
+/// Current privilege escalation and root runtime status.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum RootStatus {
@@ -47,33 +66,40 @@ pub enum RootStatus {
 }
 
 impl RootStatus {
+    /// Returns true if either temporary root or `KernelSU` is active.
+    #[must_use]
     pub fn is_rooted(&self) -> bool {
         matches!(self, Self::TempRoot { .. } | Self::KernelSu { .. })
     }
 
+    /// Returns true if `KernelSU` kernel driver is active.
+    #[must_use]
     pub fn is_kernelsu(&self) -> bool {
         matches!(self, Self::KernelSu { .. })
     }
 
+    /// Returns true if the background exploit daemon is actively running.
+    #[must_use]
     pub fn is_exploit_running(&self) -> bool {
         match self {
-            Self::NotRooted { exploit_running } => *exploit_running,
-            Self::TempRoot {
+            Self::NotRooted { exploit_running }
+            | Self::TempRoot {
                 exploit_running, ..
             } => *exploit_running,
             Self::KernelSu { .. } => false,
         }
     }
-
+    /// Returns the active working `su` path if rooted.
+    #[must_use]
     pub fn su_path(&self) -> Option<&str> {
         match self {
             Self::NotRooted { .. } => None,
-            Self::TempRoot { su_path, .. } => Some(su_path.as_str()),
-            Self::KernelSu { su_path } => Some(su_path.as_str()),
+            Self::TempRoot { su_path, .. } | Self::KernelSu { su_path } => Some(su_path.as_str()),
         }
     }
 }
 
+/// Shell script snippet executed on device to probe root status and active daemons.
 pub const ROOT_PROBE_CMD: &str = "\
     echo __RMV_KSU__; cat /proc/modules 2>/dev/null | grep -i kernelsu; \
     echo __RMV_SYS_SU__; /system/bin/su -c id 2>/dev/null; \
@@ -83,6 +109,8 @@ pub const ROOT_PROBE_CMD: &str = "\
     echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE 2>/dev/null | head -n 1; \
     echo __RMV_END__";
 
+/// Parses raw output from `ROOT_PROBE_CMD` into strongly-typed `RootStatus`.
+#[must_use]
 pub fn parse_root_probe(probe_output: &str) -> RootStatus {
     let ksu_part = probe_output
         .split("__RMV_KSU__")
@@ -174,12 +202,20 @@ pub fn parse_root_probe(probe_output: &str) -> RootStatus {
     }
 }
 
+/// Probes connected device for active root status.
+///
+/// # Errors
+/// Returns an error if transport execution fails.
 pub async fn check_root_status<T: Transport>(transport: &T) -> Result<RootStatus> {
     let out = transport.exec(ROOT_PROBE_CMD).await?;
     Ok(parse_root_probe(&out.combined()))
 }
 
 impl DeviceInfo {
+    /// Parses device metadata from property queries and kernel banner.
+    ///
+    /// # Errors
+    /// Returns an error if `/proc/version` cannot be parsed.
     pub fn parse(
         model: &str,
         device: &str,
@@ -201,9 +237,11 @@ impl DeviceInfo {
         })
     }
 
+    /// Evaluates device kernel against CVE-2026-43499 patch criteria.
+    #[must_use]
     pub fn evaluate_gate(&self) -> GateStatus {
         let (major, minor, patch) = self.kernel_version;
-        let ver_str = format!("{}.{}.{}", major, minor, patch);
+        let ver_str = format!("{major}.{minor}.{patch}");
 
         match (major, minor) {
             (6, 6) => {
@@ -248,12 +286,27 @@ impl DeviceInfo {
         }
     }
 }
+/// Tuple of semantic kernel version and optional commit/fingerprint tags.
+pub type KernelDetails = ((u32, u32, u32), Option<String>, Option<String>);
 
-pub fn parse_kernel_details(
-    proc_version: &str,
-) -> Result<((u32, u32, u32), Option<String>, Option<String>)> {
-    let re_ver = Regex::new(r"Linux version (\d+)\.(\d+)\.(\d+)").unwrap();
-    let caps = re_ver
+#[expect(clippy::expect_used, reason = "Known compile-time regex literal")]
+static RE_VER: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"Linux version (\d+)\.(\d+)\.(\d+)").expect("valid Linux version regex")
+});
+#[expect(clippy::expect_used, reason = "Known compile-time regex literal")]
+static RE_GKI: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"-(g[0-9a-f]{10,14})(?:[-_\s]|$)").expect("valid GKI regex")
+});
+#[expect(clippy::expect_used, reason = "Known compile-time regex literal")]
+static RE_ABOGKI: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"(abogki\d+)").expect("valid abogki regex"));
+
+/// Parses semantic kernel version and optional GKI/ABOGKI identifiers from `/proc/version`.
+///
+/// # Errors
+/// Returns an error if kernel version integers cannot be parsed.
+pub fn parse_kernel_details(proc_version: &str) -> Result<KernelDetails> {
+    let caps = RE_VER
         .captures(proc_version)
         .ok_or_else(|| RmvError::UnsupportedKernel {
             version: proc_version.to_string(),
@@ -264,11 +317,8 @@ pub fn parse_kernel_details(
     let minor: u32 = caps[2].parse().unwrap_or(0);
     let patch: u32 = caps[3].parse().unwrap_or(0);
 
-    let re_gki = Regex::new(r"-(g[0-9a-f]{10,14})(?:[-_\s]|$)").unwrap();
-    let gki_git_id = re_gki.captures(proc_version).map(|c| c[1].to_string());
-
-    let re_abogki = Regex::new(r"(abogki\d+)").unwrap();
-    let abogki_fingerprint = re_abogki.captures(proc_version).map(|c| c[1].to_string());
+    let gki_git_id = RE_GKI.captures(proc_version).map(|c| c[1].to_string());
+    let abogki_fingerprint = RE_ABOGKI.captures(proc_version).map(|c| c[1].to_string());
 
     Ok(((major, minor, patch), gki_git_id, abogki_fingerprint))
 }

@@ -1,8 +1,10 @@
 use super::resolve_transport;
 use anyhow::Result;
-use colored::*;
+use colored::Colorize;
 use rmv_core::{HistoryManager, TransportExt, TransportMode};
 use rust_i18n::t;
+use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::PathBuf;
 
 pub async fn run_diagnose(
@@ -11,136 +13,222 @@ pub async fn run_diagnose(
     output_dir: Option<PathBuf>,
 ) -> Result<()> {
     println!("{} {}", "[ .. ]".cyan(), t!("cli.diagnose_collecting"));
-    let transport = resolve_transport(serial, mode).await?;
 
-    let mut report = String::with_capacity(8192);
-    report.push_str(
-        "================================================================================\n",
-    );
-    report.push_str(&format!(
-        "RootMyVivo-RS Diagnostics Report - v{}\n",
-        env!("CARGO_PKG_VERSION")
-    ));
+    let transport = resolve_transport(serial, mode).await?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    report.push_str(&format!("Timestamp: {} (epoch seconds)\n", now));
-    report.push_str(
-        "================================================================================\n\n",
+
+    let report = collect_diagnostics_report(&transport, now).await;
+
+    let out_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+    let zip_path = build_zip(&out_dir, now, &report).await?;
+
+    println!(
+        "{} {}",
+        "[ ok ]".green().bold(),
+        t!("cli.diagnose_done", path = zip_path.display().to_string()).green()
     );
 
-    report.push_str("--- [1. Device Information] ---\n");
+    Ok(())
+}
+
+async fn collect_diagnostics_report(
+    transport: &std::sync::Arc<dyn rmv_core::Transport>,
+    now: u64,
+) -> String {
+    let mut report = String::with_capacity(8192);
+    append_report_header(&mut report, now);
+    append_device_section(&mut report, transport).await;
+    append_boot_and_root_section(&mut report, transport).await;
+    append_residue_and_ksud_section(&mut report, transport).await;
+    append_logs_section(&mut report, transport).await;
+    report
+}
+
+fn append_report_header(report: &mut String, now: u64) {
+    let _ = writeln!(
+        report,
+        "================================================================================"
+    );
+    let _ = writeln!(
+        report,
+        "RootMyVivo-RS Diagnostics Report - v{}",
+        env!("CARGO_PKG_VERSION")
+    );
+    let _ = writeln!(report, "Timestamp: {now} (epoch seconds)");
+    let _ = writeln!(
+        report,
+        "================================================================================\n"
+    );
+}
+
+async fn append_device_section(
+    report: &mut String,
+    transport: &std::sync::Arc<dyn rmv_core::Transport>,
+) {
+    let _ = writeln!(report, "--- [1. Device Information] ---");
     match transport.get_device_info().await {
         Ok(dev) => {
-            report.push_str(&format!("Brand:             {}\n", dev.brand));
-            report.push_str(&format!("Model:             {}\n", dev.model));
-            report.push_str(&format!("Device Code:       {}\n", dev.device));
-            report.push_str(&format!("Kernel Version:    {}\n", dev.kernel_full));
-            report.push_str(&format!("Boot ID:           {}\n", dev.boot_id));
-            report.push_str(&format!(
-                "GKI Commit ID:     {}\n",
+            let _ = writeln!(report, "Brand:             {}", dev.brand);
+            let _ = writeln!(report, "Model:             {}", dev.model);
+            let _ = writeln!(report, "Device Code:       {}", dev.device);
+            let _ = writeln!(report, "Kernel Version:    {}", dev.kernel_full);
+            let _ = writeln!(report, "Boot ID:           {}", dev.boot_id);
+            let _ = writeln!(
+                report,
+                "GKI Commit ID:     {}",
                 dev.gki_git_id.as_deref().unwrap_or("-")
-            ));
-            report.push_str(&format!(
-                "ABOGKI Fingerprint:{}\n",
+            );
+            let _ = writeln!(
+                report,
+                "ABOGKI Fingerprint:{}",
                 dev.abogki_fingerprint.as_deref().unwrap_or("-")
-            ));
+            );
         }
         Err(e) => {
-            report.push_str(&format!("<unavailable: get_device_info error: {}>\n", e));
+            let _ = writeln!(report, "<unavailable: get_device_info error: {e}>");
         }
     }
     report.push('\n');
 
-    report.push_str("--- [2. Boot & Security Properties] ---\n");
+    let _ = writeln!(report, "--- [2. Boot & Security Properties] ---");
     match transport.exec("getprop sys.boot_completed").await {
-        Ok(out) => report.push_str(&format!("sys.boot_completed: {}\n", out.stdout.trim())),
-        Err(e) => report.push_str(&format!("sys.boot_completed: <error: {}>\n", e)),
+        Ok(out) => {
+            let _ = writeln!(report, "sys.boot_completed: {}", out.stdout.trim());
+        }
+        Err(e) => {
+            let _ = writeln!(report, "sys.boot_completed: <error: {e}>");
+        }
     }
     match transport.exec("getenforce").await {
-        Ok(out) => report.push_str(&format!("SELinux Enforce:    {}\n", out.stdout.trim())),
-        Err(e) => report.push_str(&format!("SELinux Enforce:    <error: {}>\n", e)),
+        Ok(out) => {
+            let _ = writeln!(report, "SELinux Enforce:    {}", out.stdout.trim());
+        }
+        Err(e) => {
+            let _ = writeln!(report, "SELinux Enforce:    <error: {e}>");
+        }
     }
     report.push('\n');
+}
 
-    report.push_str("--- [3. Root Status & Kernel Modules] ---\n");
-    match rmv_core::check_root_status(&transport).await {
-        Ok(st) => report.push_str(&format!("Root Status: {:?}\n", st)),
-        Err(e) => report.push_str(&format!("Root Status: <error: {}>\n", e)),
+async fn append_boot_and_root_section(
+    report: &mut String,
+    transport: &std::sync::Arc<dyn rmv_core::Transport>,
+) {
+    let _ = writeln!(report, "--- [3. Root Status & Kernel Modules] ---");
+    match rmv_core::check_root_status(transport).await {
+        Ok(st) => {
+            let _ = writeln!(report, "Root Status: {st:?}");
+        }
+        Err(e) => {
+            let _ = writeln!(report, "Root Status: <error: {e}>");
+        }
     }
     match transport
         .exec("cat /proc/modules 2>/dev/null | grep -iE 'kernelsu|linjector'")
         .await
     {
         Ok(out) if !out.combined().trim().is_empty() => {
-            report.push_str(&format!("Modules (shell):\n{}\n", out.combined().trim()));
+            let _ = writeln!(report, "Modules (shell):\n{}", out.combined().trim());
         }
         _ => {
             match transport.exec("/system/bin/su -c 'cat /proc/modules' 2>/dev/null | grep -iE 'kernelsu|linjector'").await {
-                Ok(out) if !out.combined().trim().is_empty() => report.push_str(&format!("Modules (su):\n{}\n", out.combined().trim())),
-                _ => report.push_str("Modules: <none or unreadable>\n"),
+                Ok(out) if !out.combined().trim().is_empty() => {
+                    let _ = writeln!(report, "Modules (su):\n{}", out.combined().trim());
+                }
+                _ => {
+                    let _ = writeln!(report, "Modules: <none or unreadable>");
+                }
             }
         }
     }
     report.push('\n');
+}
 
-    report.push_str("--- [4. /data/local/tmp/rmv Residue] ---\n");
+async fn append_residue_and_ksud_section(
+    report: &mut String,
+    transport: &std::sync::Arc<dyn rmv_core::Transport>,
+) {
+    let _ = writeln!(report, "--- [4. /data/local/tmp/rmv Residue] ---");
     match transport.exec("ls -la /data/local/tmp/rmv/ 2>&1").await {
-        Ok(out) => report.push_str(&format!("{}\n", out.combined().trim())),
-        Err(e) => report.push_str(&format!("<error: {}>\n", e)),
+        Ok(out) => {
+            let _ = writeln!(report, "{}", out.combined().trim());
+        }
+        Err(e) => {
+            let _ = writeln!(report, "<error: {e}>");
+        }
     }
     report.push('\n');
 
-    report.push_str("--- [5. Ksud Status] ---\n");
+    let _ = writeln!(report, "--- [5. Ksud Status] ---");
     let ksud_cmd = "if [ -f /data/adb/ksu/bin/ksud ]; then /data/adb/ksu/bin/ksud debug info 2>&1; elif [ -f /data/local/tmp/rmv/ksud ]; then /data/local/tmp/rmv/ksud debug info 2>&1; else echo 'ksud not found'; fi";
     match transport.exec(ksud_cmd).await {
-        Ok(out) => report.push_str(&format!("{}\n", out.combined().trim())),
-        Err(e) => report.push_str(&format!("<error: {}>\n", e)),
+        Ok(out) => {
+            let _ = writeln!(report, "{}", out.combined().trim());
+        }
+        Err(e) => {
+            let _ = writeln!(report, "<error: {e}>");
+        }
     }
     report.push('\n');
+}
 
-    report.push_str("--- [6. Installed KSU Managers] ---\n");
+async fn append_logs_section(
+    report: &mut String,
+    transport: &std::sync::Arc<dyn rmv_core::Transport>,
+) {
+    let _ = writeln!(report, "--- [6. Installed KSU Managers] ---");
     let pm_cmd = "for p in com.resukisu.resukisu com.sukisu.ultra me.weishu.kernelsu com.rifsxd.ksunext; do if path=$(pm path $p 2>/dev/null) && [ -n \"$path\" ]; then echo \"$p: $path\"; fi; done";
     match transport.exec(pm_cmd).await {
         Ok(out) => {
             if out.stdout.trim().is_empty() {
-                report.push_str("<no supported manager app installed>\n");
+                let _ = writeln!(report, "<no supported manager app installed>");
             } else {
-                report.push_str(&format!("{}\n", out.stdout.trim()));
+                let _ = writeln!(report, "{}", out.stdout.trim());
             }
         }
-        Err(e) => report.push_str(&format!("<error: {}>\n", e)),
+        Err(e) => {
+            let _ = writeln!(report, "<error: {e}>");
+        }
     }
     report.push('\n');
 
-    report.push_str("--- [7. Recent Logcat (last 200 lines)] ---\n");
+    let _ = writeln!(report, "--- [7. Recent Logcat (last 200 lines)] ---");
     match transport.exec("logcat -d -t 200 2>&1").await {
-        Ok(out) => report.push_str(&format!("{}\n", out.combined().trim())),
-        Err(e) => report.push_str(&format!("<error: {}>\n", e)),
+        Ok(out) => {
+            let _ = writeln!(report, "{}", out.combined().trim());
+        }
+        Err(e) => {
+            let _ = writeln!(report, "<error: {e}>");
+        }
     }
     report.push('\n');
 
-    report.push_str("--- [8. Kernel Dmesg (last 200 lines)] ---\n");
+    let _ = writeln!(report, "--- [8. Kernel Dmesg (last 200 lines)] ---");
     match transport.exec("dmesg 2>/dev/null | tail -n 200").await {
         Ok(out) if !out.stdout.trim().is_empty() => {
-            report.push_str(&format!("{}\n", out.stdout.trim()));
+            let _ = writeln!(report, "{}", out.stdout.trim());
         }
         _ => match transport
             .exec("/system/bin/su -c 'dmesg' 2>/dev/null | tail -n 200")
             .await
         {
             Ok(out) if !out.combined().trim().is_empty() => {
-                report.push_str(&format!("{}\n", out.combined().trim()));
+                let _ = writeln!(report, "{}", out.combined().trim());
             }
-            _ => report.push_str("<dmesg restricted or empty>\n"),
+            _ => {
+                let _ = writeln!(report, "<dmesg restricted or empty>");
+            }
         },
     }
     report.push('\n');
+}
 
-    let out_dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-    std::fs::create_dir_all(&out_dir)?;
+async fn build_zip(out_dir: &std::path::Path, now: u64, report: &str) -> Result<PathBuf> {
+    std::fs::create_dir_all(out_dir)?;
 
-    let zip_filename = format!("rmv-diagnose-{}.zip", now);
+    let zip_filename = format!("rmv-diagnose-{now}.zip");
     let zip_path = out_dir.join(&zip_filename);
 
     let file = std::fs::File::create(&zip_path)?;
@@ -148,7 +236,6 @@ pub async fn run_diagnose(
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
-    use std::io::Write;
     zip.start_file("report.txt", options)?;
     zip.write_all(report.as_bytes())?;
 
@@ -164,12 +251,5 @@ pub async fn run_diagnose(
     }
 
     zip.finish()?;
-
-    println!(
-        "{} {}",
-        "[ ok ]".green().bold(),
-        t!("cli.diagnose_done", path = zip_path.display().to_string()).green()
-    );
-
-    Ok(())
+    Ok(zip_path)
 }

@@ -1,4 +1,4 @@
-#![allow(clippy::disallowed_types)]
+#![allow(clippy::disallowed_types, dead_code)]
 // 测试替身需要 Send + Sync 的互斥量，且锁从不跨 await 持有。
 use async_trait::async_trait;
 use std::path::Path;
@@ -8,7 +8,7 @@ use rmv_core::transport::{ExecOutput, Transport};
 use rmv_core::{Result, RmvError};
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[derive(Debug, Clone)]
@@ -144,7 +144,7 @@ impl Transport for MockTransport {
             Ok(())
         } else {
             Err(RmvError::Adb {
-                message: format!("remote file {} not found in mock pull table", remote_path),
+                message: format!("remote file {remote_path} not found in mock pull table"),
                 code: Some(1),
             })
         }
@@ -161,7 +161,7 @@ impl Transport for MockTransport {
             Ok(data.clone())
         } else {
             Err(RmvError::Adb {
-                message: format!("remote file {} not found in mock pull table", remote_path),
+                message: format!("remote file {remote_path} not found in mock pull table"),
                 code: Some(1),
             })
         }

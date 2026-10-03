@@ -5,15 +5,21 @@ use adb_client::server::ADBServer;
 use rust_i18n::t;
 use std::sync::Arc;
 
+/// Selected transport backend mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TransportMode {
+    /// Auto-detect transport: prefer ADB `SmartSocket` client, fall back to CLI.
     Auto,
+    /// Force pure-Rust ADB `SmartSocket` client transport.
     Client,
+    /// Force CLI `adb` subprocess transport.
     Cli,
 }
 
 impl TransportMode {
+    /// Parses transport mode from optional string argument.
+    #[must_use]
     pub fn from_str_opt(s: Option<&str>) -> Self {
         match s.map(str::to_ascii_lowercase).as_deref() {
             Some("cli") => Self::Cli,
@@ -23,9 +29,14 @@ impl TransportMode {
     }
 }
 
+/// Factory and resolver for device transport instances.
 pub struct TransportBuilder;
 
 impl TransportBuilder {
+    /// Resolves an appropriate device transport based on serial and configured mode.
+    ///
+    /// # Errors
+    /// Returns an error if the device cannot be reached or multiple devices conflict.
     pub async fn resolve(
         serial: Option<String>,
         mode: TransportMode,
@@ -53,7 +64,7 @@ impl TransportBuilder {
         // 2. Query devices from ADB server
         let mut server = ADBServer::default();
         let devices = server.devices().map_err(|e| RmvError::Adb {
-            message: format!("Failed to query devices from ADB server: {}", e),
+            message: format!("Failed to query devices from ADB server: {e}"),
             code: None,
         })?;
 
@@ -75,9 +86,8 @@ impl TransportBuilder {
             ));
         }
 
-        if online_devices.len() == 1 {
-            let dev = online_devices.into_iter().next().unwrap();
-            let client = AdbClientTransport::new(Some(dev), None);
+        if let [dev] = &online_devices[..] {
+            let client = AdbClientTransport::new(Some(dev.clone()), None);
             return Ok(Arc::new(client));
         }
         if let Some(target) = &serial {
@@ -100,6 +110,10 @@ impl TransportBuilder {
         })
     }
 
+    /// Lists connected online device serials and detected model names.
+    ///
+    /// # Errors
+    /// Returns an error if transport querying fails.
     pub async fn list_online_devices(mode: TransportMode) -> Result<Vec<(String, String)>> {
         if mode == TransportMode::Cli {
             let cli_devs = AdbCliTransport::list_devices().await.unwrap_or_default();
@@ -142,6 +156,10 @@ impl TransportBuilder {
         Ok(results)
     }
 
+    /// Resolves transports for all currently connected online devices.
+    ///
+    /// # Errors
+    /// Returns an error if no online devices are detected or transport resolution fails.
     pub async fn resolve_all(mode: TransportMode) -> Result<Vec<(String, Arc<dyn Transport>)>> {
         let online = Self::list_online_devices(mode).await?;
         if online.is_empty() {

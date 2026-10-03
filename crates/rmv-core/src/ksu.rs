@@ -8,16 +8,23 @@ use crate::error::{Result, RmvError};
 use crate::quote::sh_quote;
 use crate::transport::Transport;
 
+/// Supported `KernelSU` variants and forks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum KsuVariant {
+    /// Official `KernelSU` by tiann.
     KernelSU,
+    /// `KernelSU Next` fork with enhanced hooking.
     KernelSuNext,
+    /// `SukiSU Ultra` fork for advanced patch sets.
     SukiSuUltra,
+    /// `ReSukiSU` fork.
     ReSukiSu,
 }
 
 impl KsuVariant {
+    /// Returns the human-readable display name.
+    #[must_use]
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::KernelSU => "KernelSU",
@@ -27,6 +34,8 @@ impl KsuVariant {
         }
     }
 
+    /// Returns Android application package identifier.
+    #[must_use]
     pub fn package_name(&self) -> &'static str {
         match self {
             Self::KernelSU => "me.weishu.kernelsu",
@@ -36,6 +45,8 @@ impl KsuVariant {
         }
     }
 
+    /// Parses a variant from a short identifier.
+    #[must_use]
     pub fn from_id(id: &str) -> Self {
         match id.to_lowercase().as_str() {
             "kernelsu" | "ksu" => Self::KernelSU,
@@ -45,6 +56,8 @@ impl KsuVariant {
         }
     }
 
+    /// Returns the canonical variant identifier.
+    #[must_use]
     pub fn id(&self) -> &'static str {
         match self {
             Self::KernelSU => "kernelsu",
@@ -54,6 +67,8 @@ impl KsuVariant {
         }
     }
 
+    /// Returns the GitHub repository owner and repository name.
+    #[must_use]
     pub fn github_repo(&self) -> (&'static str, &'static str) {
         match self {
             Self::KernelSU => ("tiann", "KernelSU"),
@@ -63,6 +78,8 @@ impl KsuVariant {
         }
     }
 
+    /// Returns slice of all supported variants.
+    #[must_use]
     pub fn all_variants() -> &'static [Self] {
         &[
             Self::SukiSuUltra,
@@ -73,9 +90,14 @@ impl KsuVariant {
     }
 }
 
+/// `KernelSU` deployment, late-loading, and module inspection orchestrator.
 pub struct KsuOrchestrator;
 
 impl KsuOrchestrator {
+    /// Checks whether `KernelSU` driver is listed in `/proc/modules`.
+    ///
+    /// # Errors
+    /// Returns an error if transport execution fails.
     pub async fn is_module_loaded<T: Transport>(transport: &T) -> Result<bool> {
         // /proc/modules 受 SELinux 限制，需通过 root 读取
         let cmd = "sh -c 'if [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c \"cat /proc/modules\" 2>/dev/null; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c \"cat /proc/modules\" 2>/dev/null; elif [ -x /system/bin/su ]; then /system/bin/su -c \"cat /proc/modules\" 2>/dev/null; else cat /proc/modules 2>/dev/null; fi' | grep -i kernelsu";
@@ -83,12 +105,20 @@ impl KsuOrchestrator {
         Ok(out.combined().to_lowercase().contains("kernelsu"))
     }
 
+    /// Verifies if `KernelSU` su binary is functional and returns root context.
+    ///
+    /// # Errors
+    /// Returns an error if transport execution fails.
     pub async fn is_ksu_functional<T: Transport>(transport: &T) -> Result<bool> {
         let cmd = "sh -c 'if [ -x /system/bin/su ]; then /system/bin/su -c id 2>/dev/null; elif command -v su >/dev/null 2>&1; then su -c id 2>/dev/null; else exit 1; fi'";
         let out = transport.exec(cmd).await?;
         Ok(out.success() && out.stdout.contains("uid=0") && out.stdout.contains("context=u:r:ksu"))
     }
 
+    /// Ensures `/data/adb` directory exists with root ownership.
+    ///
+    /// # Errors
+    /// Returns an error if transport execution fails.
     pub async fn ensure_data_adb_dir<T: Transport>(transport: &T) -> Result<()> {
         let cmd = r#"sh -c '
             MKDIR_CMD="mkdir -p /data/adb && chmod 700 /data/adb && chown root:root /data/adb"
@@ -108,6 +138,10 @@ impl KsuOrchestrator {
         Ok(())
     }
 
+    /// Enables su compatibility mode via ksud.
+    ///
+    /// # Errors
+    /// Returns an error if transport execution fails.
     pub async fn enable_su_compat<T: Transport>(transport: &T) -> Result<bool> {
         let cmd = r#"sh -c '
             SET_CMD="if [ -x /data/adb/ksud ]; then /data/adb/ksud feature set su_compat 1; elif [ -x /data/adb/ksu/bin/ksud ]; then /data/adb/ksu/bin/ksud feature set su_compat 1; elif [ -x /data/local/tmp/rmv/ksud ]; then /data/local/tmp/rmv/ksud feature set su_compat 1; elif command -v ksud >/dev/null 2>&1; then ksud feature set su_compat 1; fi"
@@ -122,6 +156,10 @@ impl KsuOrchestrator {
         let _ = transport.exec(cmd).await;
         Ok(Self::is_ksu_functional(transport).await.unwrap_or(false))
     }
+    /// Lists active `KernelSU` modules in `/data/adb/modules`.
+    ///
+    /// # Errors
+    /// Returns an error if transport execution fails.
     pub async fn list_modules<T: Transport>(transport: &T) -> Result<Vec<String>> {
         if !Self::is_module_loaded(transport).await.unwrap_or(false) {
             return Ok(Vec::new());
@@ -139,6 +177,10 @@ impl KsuOrchestrator {
             .collect();
         Ok(modules)
     }
+    /// Waits for Android `PackageManager` framework to become ready.
+    ///
+    /// # Errors
+    /// Returns an error if transport execution fails.
     pub async fn wait_for_framework_ready<T: Transport>(
         transport: &T,
         timeout_sec: u64,
@@ -156,6 +198,10 @@ impl KsuOrchestrator {
         Ok(false)
     }
 
+    /// Ensures ksud binary is deployed and available on device.
+    ///
+    /// # Errors
+    /// Returns an error if transport execution or extraction fails.
     pub async fn ensure_ksud_deployed<T: Transport>(
         transport: &T,
         variant: KsuVariant,
@@ -244,6 +290,10 @@ impl KsuOrchestrator {
         ))
     }
 
+    /// Performs `KernelSU` late-loading into running kernel.
+    ///
+    /// # Errors
+    /// Returns an error if deployment, execution, or module validation fails.
     pub async fn late_load<T: Transport>(
         transport: &T,
         variant: KsuVariant,

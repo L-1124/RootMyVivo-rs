@@ -19,9 +19,10 @@ pub use pair::*;
 pub use run::*;
 
 use anyhow::Result;
-use colored::*;
+use colored::Colorize;
 use rmv_core::{Transport, TransportBuilder, TransportMode};
 use rust_i18n::t;
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 pub async fn resolve_transport(
@@ -49,7 +50,6 @@ pub async fn resolve_transport(
             .map_err(Into::into);
     }
 
-    use std::io::IsTerminal;
     if std::io::stdin().is_terminal() {
         let items: Vec<String> = devices
             .iter()
@@ -74,9 +74,8 @@ pub async fn resolve_transport(
             return TransportBuilder::resolve(Some(chosen_serial.clone()), mode)
                 .await
                 .map_err(Into::into);
-        } else {
-            return Err(rmv_core::RmvError::Cancelled.into());
         }
+        return Err(rmv_core::RmvError::Cancelled.into());
     }
 
     let device_names: Vec<String> = devices.into_iter().map(|(s, _)| s).collect();
