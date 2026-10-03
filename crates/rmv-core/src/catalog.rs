@@ -1,5 +1,6 @@
 use futures_util::StreamExt;
 use reqwest::Client;
+use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -300,9 +301,7 @@ impl CatalogV5 {
                     if resp.status().is_success() {
                         match resp.json::<CatalogV5>().await {
                             Ok(cat) => {
-                                if source == CatalogUrlSource::Default {
-                                    Self::save_cached(&cat, url).await;
-                                }
+                                Self::save_cached(&cat, url).await;
                                 return Ok(cat);
                             }
                             Err(e) => last_err = Some(RmvError::Http(e)),
@@ -318,7 +317,7 @@ impl CatalogV5 {
         }
 
         Err(last_err.unwrap_or_else(|| {
-            RmvError::CatalogFetchFailed("载荷目录节点均无法连接或解析失败".to_string())
+            RmvError::CatalogFetchFailed(t!("error.catalog_all_nodes_failed").to_string())
         }))
     }
 
@@ -389,7 +388,8 @@ impl CatalogV5 {
             let resp = match client.get(&url).send().await {
                 Ok(r) if r.status().is_success() => r,
                 Ok(r) => {
-                    last_error = Some(format!("HTTP 状态码: {}", r.status()));
+                    last_error =
+                        Some(t!("error.http_status", status = r.status().to_string()).to_string());
                     continue;
                 }
                 Err(e) => {
@@ -459,10 +459,14 @@ impl CatalogV5 {
         }
 
         if !success {
-            return Err(RmvError::CatalogFetchFailed(format!(
-                "下载载荷失败: {}",
-                last_error.unwrap_or_else(|| "未知下载错误".to_string())
-            )));
+            return Err(RmvError::CatalogFetchFailed(
+                t!(
+                    "error.payload_download_failed",
+                    message =
+                        last_error.unwrap_or_else(|| t!("error.unknown_download").to_string())
+                )
+                .to_string(),
+            ));
         }
 
         Ok(())

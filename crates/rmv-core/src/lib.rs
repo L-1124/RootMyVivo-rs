@@ -50,7 +50,7 @@ pub use event::{EngineEvent, EngineStatus, LogLevel, Phase};
 pub use history::{HistoryManager, RunRecord, RunStatus};
 pub use i18n::{current_language, set_current_language, Language};
 pub use ksu::{KsuOrchestrator, KsuVariant};
-pub use manager::{get_static_asset, CachedManagerInfo, ManagerAssetInfo, ManagerDownloader};
+pub use manager::{CachedManagerInfo, ManagerAssetInfo, ManagerDownloader};
 pub use mirror::{MirrorConfig, DEFAULT_GITHUB_MIRRORS};
 pub use paths::{
     cache_dir, catalog_url_file, history_dir, manager_cache_dir, mirror_config_file, rmv_home_dir,

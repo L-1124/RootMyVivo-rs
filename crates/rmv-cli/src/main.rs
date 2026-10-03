@@ -68,8 +68,8 @@ enum Commands {
         #[arg(long, default_value_t = 8)]
         delay: u64,
 
-        #[arg(long, default_value_t = true)]
-        save_history: bool,
+        #[arg(long = "no-save-history", default_value_t = false)]
+        no_save_history: bool,
 
         #[arg(long, default_value_t = false)]
         reboot_first: bool,
@@ -238,7 +238,7 @@ const RUN_ARG_HELPS: &[(&str, &str)] = &[
     ("skip_ksu", "cli.arg_skip_ksu"),
     ("attempts", "cli.arg_attempts"),
     ("delay", "cli.arg_delay"),
-    ("save_history", "cli.arg_save_history"),
+    ("no_save_history", "cli.arg_no_save_history"),
     ("reboot_first", "cli.arg_reboot_first"),
     ("dry_run", "cli.arg_dry_run"),
     ("manager_apk", "cli.arg_manager_apk"),
@@ -418,7 +418,7 @@ async fn main() -> std::process::ExitCode {
             skip_ksu,
             attempts,
             delay,
-            save_history,
+            no_save_history,
             reboot_first,
             dry_run,
             manager_apk,
@@ -437,7 +437,7 @@ async fn main() -> std::process::ExitCode {
                 skip_ksu,
                 attempts,
                 delay,
-                save_history,
+                save_history: !no_save_history,
                 reboot_first,
                 dry_run,
                 manager_apk,

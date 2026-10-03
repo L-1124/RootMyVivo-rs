@@ -106,9 +106,6 @@ impl CliUi {
             EngineEvent::Log { level, line } => {
                 self.on_log(level, &line);
             }
-            EngineEvent::Progress { text, active } => {
-                self.on_progress(&text, active);
-            }
             EngineEvent::Download {
                 filename,
                 downloaded,
@@ -187,12 +184,6 @@ impl CliUi {
             let _ = mp.println(log_str);
         } else {
             self.spinner.suspend(|| println!("{log_str}"));
-        }
-    }
-
-    fn on_progress(&mut self, text: &str, active: bool) {
-        if active {
-            self.spinner.set_message(text.to_string());
         }
     }
 

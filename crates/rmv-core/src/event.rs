@@ -89,13 +89,6 @@ pub enum EngineEvent {
         /// Log message text.
         line: String,
     },
-    /// Transient progress or spinner text update.
-    Progress {
-        /// Progress status text.
-        text: String,
-        /// Whether the progress activity indicator should remain active.
-        active: bool,
-    },
     /// File download byte progress update.
     Download {
         /// Target filename.

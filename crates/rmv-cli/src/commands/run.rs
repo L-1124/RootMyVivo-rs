@@ -48,6 +48,24 @@ struct DeviceSummary {
 pub async fn run_exploit(args: RunArgs) -> Result<()> {
     let ksu_variant = KsuVariant::from_id(&args.ksu);
 
+    // 非阻断一致性提示：预估耗时超过 --timeout 时轮询会先超时
+    if args.timeout != 0 {
+        let estimated = u64::from(args.attempts) * args.delay;
+        if estimated >= args.timeout {
+            eprintln!(
+                "[warn] {}",
+                t!(
+                    "cli.warn_timeout_budget",
+                    attempts = args.attempts.to_string(),
+                    delay = args.delay.to_string(),
+                    estimated = estimated.to_string(),
+                    timeout = args.timeout.to_string()
+                )
+                .yellow()
+            );
+        }
+    }
+
     if args.all_devices {
         run_fleet(args, ksu_variant).await
     } else {
@@ -99,7 +117,7 @@ async fn run_single(args: RunArgs, ksu_variant: KsuVariant) -> Result<()> {
         _ = tokio::signal::ctrl_c() => {
             eprintln!("\n{}", t!("cli.ctrl_c_interrupted").yellow().bold());
             let _ = transport
-                .exec("pkill -9 -x true 2>/dev/null; pkill -f preload.so 2>/dev/null")
+                .exec("pkill -9 -x true 2>/dev/null; pkill -f '[p]reload.so' 2>/dev/null")
                 .await;
             let _ = Persistence::clean_traces(&transport).await;
             let _ = ui_handle.await;
@@ -247,7 +265,7 @@ async fn collect_fleet_results(
     if interrupted {
         for (_, t) in transports {
             let _ = t
-                .exec("pkill -9 -x true 2>/dev/null; pkill -f preload.so 2>/dev/null")
+                .exec("pkill -9 -x true 2>/dev/null; pkill -f '[p]reload.so' 2>/dev/null")
                 .await;
             let _ = Persistence::clean_traces(t).await;
         }

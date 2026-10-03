@@ -23,8 +23,8 @@ pub struct ManagerAssetInfo {
     pub download_url: String,
     /// Asset filename on the remote release (e.g. `KernelSU_v3.3.0.apk`).
     pub filename: String,
-    /// Expected SHA-256 hex digest for pinned official assets.
-    pub sha256: Option<&'static str>,
+    /// Upstream SHA-256 digest (from GitHub release asset metadata, `sha256:` prefixed).
+    pub sha256: String,
 }
 
 impl ManagerAssetInfo {
@@ -54,49 +54,6 @@ pub struct CachedManagerInfo {
     pub size: u64,
 }
 
-/// Returns static release asset metadata with pinned SHA-256 digest for the specified root variant.
-#[must_use]
-pub fn get_static_asset(variant: KsuVariant) -> ManagerAssetInfo {
-    match variant {
-        KsuVariant::KernelSU => ManagerAssetInfo {
-            name: variant.id().to_string(),
-            version: "v3.3.0".to_string(),
-            filename: "KernelSU_v3.3.0_32601-release.apk".to_string(),
-            download_url:
-                "https://github.com/tiann/KernelSU/releases/download/v3.3.0/KernelSU_v3.3.0_32601-release.apk"
-                    .to_string(),
-            sha256: Some("c197060ecb89702e7d54a4c95e29cf5e8d97369bbbb436979ab7fd6bcde7b077"),
-        },
-        KsuVariant::KernelSuNext => ManagerAssetInfo {
-            name: variant.id().to_string(),
-            version: "v3.4.0".to_string(),
-            filename: "KernelSU_Next_v3.4.0_33294-release.apk".to_string(),
-            download_url:
-                "https://github.com/KernelSU-Next/KernelSU-Next/releases/download/v3.4.0/KernelSU_Next_v3.4.0_33294-release.apk"
-                    .to_string(),
-            sha256: Some("50339a93c0f812b8a72c1a387a1b441891e3df0f20b2d9daf80fd798d04b3de8"),
-        },
-        KsuVariant::SukiSuUltra => ManagerAssetInfo {
-            name: variant.id().to_string(),
-            version: "v4.2.0".to_string(),
-            filename: "SukiSU_v4.2.0_40900-release.apk".to_string(),
-            download_url:
-                "https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases/download/v4.2.0/SukiSU_v4.2.0_40900-release.apk"
-                    .to_string(),
-            sha256: Some("4ca9810e6355fbff0bbe4bf5ce159808e64a40d85987a11894030cd990a6bdf3"),
-        },
-        KsuVariant::ReSukiSu => ManagerAssetInfo {
-            name: variant.id().to_string(),
-            version: "v4.2.0-rc3".to_string(),
-            filename: "ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk".to_string(),
-            download_url:
-                "https://github.com/ReSukiSU/ReSukiSU/releases/download/v4.2.0-rc3/ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk"
-                    .to_string(),
-            sha256: Some("25657bc449439687608fffa04b4b586de90fc405e3dc6217bd997fc71ba0a0a1"),
-        },
-    }
-}
-
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
     tag_name: String,
@@ -108,6 +65,9 @@ struct GithubRelease {
 struct GithubAsset {
     name: String,
     browser_download_url: String,
+    /// GitHub-computed SHA-256 of the uploaded asset (`sha256:<hex>`); absent on older events.
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 fn select_best_apk(assets: &[GithubAsset]) -> Option<&GithubAsset> {
@@ -158,7 +118,6 @@ fn select_best_apk(assets: &[GithubAsset]) -> Option<&GithubAsset> {
 fn parse_github_release_asset(
     rel: &GithubRelease,
     variant: KsuVariant,
-    _is_latest: bool,
 ) -> Result<ManagerAssetInfo> {
     let asset = select_best_apk(&rel.assets).ok_or_else(|| {
         RmvError::KsuFailed(
@@ -171,28 +130,30 @@ fn parse_github_release_asset(
         )
     })?;
 
-    let static_asset = get_static_asset(variant);
-    let sha256 = if rel
-        .tag_name
-        .trim()
-        .eq_ignore_ascii_case(&static_asset.version)
-        || rel
-            .tag_name
-            .trim()
-            .trim_start_matches('v')
-            .eq_ignore_ascii_case(static_asset.version.trim_start_matches('v'))
-    {
-        static_asset.sha256
-    } else {
-        None
-    };
+    // GitHub computes the SHA-256 of every uploaded release asset server-side;
+    // the digest travels over the same HTTPS API response as the download URL,
+    // so it is the strongest anchor available at metadata resolution time.
+    let digest = asset
+        .digest
+        .as_deref()
+        .and_then(|d| d.strip_prefix("sha256:"))
+        .ok_or_else(|| {
+            RmvError::KsuFailed(
+                t!(
+                    "error.manager_digest_missing",
+                    name = variant.display_name(),
+                    version = rel.tag_name.as_str()
+                )
+                .to_string(),
+            )
+        })?;
 
     Ok(ManagerAssetInfo {
         name: variant.id().to_string(),
         version: rel.tag_name.clone(),
         filename: asset.name.clone(),
         download_url: asset.browser_download_url.clone(),
-        sha256,
+        sha256: digest.to_string(),
     })
 }
 
@@ -208,10 +169,7 @@ impl ManagerDownloader {
         crate::paths::manager_cache_dir()
     }
 
-    /// Fetches release asset information for a manager variant, querying GitHub API or falling back to static metadata.
-    ///
-    /// # Errors
-    /// Returns an error if the specified release tag cannot be found or resolved.
+    /// Fetches the GitHub release object for a variant, trying the tags endpoint or latest.
     async fn fetch_release_from_github(
         client: &Client,
         variant: KsuVariant,
@@ -264,47 +222,30 @@ impl ManagerDownloader {
         None
     }
 
-    /// Fetches release asset information for a manager variant, querying GitHub API or falling back to static metadata.
+    /// Fetches release asset information for a manager variant from the GitHub API.
     ///
     /// # Errors
-    /// Returns an error if the specified release tag cannot be found or resolved.
+    /// Returns an error if the GitHub API is unreachable, the release has no usable APK asset,
+    /// or upstream provides no SHA-256 digest for the selected asset.
     pub async fn fetch_asset(
         client: &Client,
         variant: KsuVariant,
         target_version: Option<&str>,
     ) -> Result<ManagerAssetInfo> {
         let is_latest = target_version.is_none();
-        if let Some(rel) =
-            Self::fetch_release_from_github(client, variant, target_version, is_latest).await
-        {
-            if let Ok(info) = parse_github_release_asset(&rel, variant, is_latest) {
-                return Ok(info);
-            }
-        }
-
-        if is_latest {
-            Ok(get_static_asset(variant))
-        } else {
-            let static_asset = get_static_asset(variant);
-            if let Some(ver) = target_version {
-                let ver_trim = ver.trim();
-                if ver_trim.eq_ignore_ascii_case(&static_asset.version)
-                    || ver_trim
-                        .trim_start_matches('v')
-                        .eq_ignore_ascii_case(static_asset.version.trim_start_matches('v'))
-                {
-                    return Ok(static_asset);
-                }
-            }
-            Err(RmvError::KsuFailed(
-                t!(
-                    "error.manager_asset_not_found",
-                    name = variant.display_name(),
-                    version = target_version.unwrap_or("latest")
+        let rel = Self::fetch_release_from_github(client, variant, target_version, is_latest)
+            .await
+            .ok_or_else(|| {
+                RmvError::KsuFailed(
+                    t!(
+                        "error.manager_api_unreachable",
+                        name = variant.display_name(),
+                        version = target_version.unwrap_or("latest")
+                    )
+                    .to_string(),
                 )
-                .to_string(),
-            ))
-        }
+            })?;
+        parse_github_release_asset(&rel, variant)
     }
 
     /// Downloads a manager APK using default HTTP client settings.
@@ -338,10 +279,7 @@ impl ManagerDownloader {
     ///
     /// # Errors
     /// Returns an error if metadata fetching fails, temporary directory creation fails, network streaming fails, or hash verification fails.
-    async fn reuse_cached(dest_path: &Path, expected_sha256: Option<&str>) -> Result<bool> {
-        let Some(expected_hash) = expected_sha256 else {
-            return Ok(false);
-        };
+    async fn reuse_cached(dest_path: &Path, expected_sha256: &str) -> Result<bool> {
         if !dest_path.exists() {
             return Ok(false);
         }
@@ -351,7 +289,7 @@ impl ManagerDownloader {
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         let calculated = format!("{:x}", hasher.finalize());
-        if calculated.eq_ignore_ascii_case(expected_hash) {
+        if calculated.eq_ignore_ascii_case(expected_sha256) {
             return Ok(true);
         }
         let _ = tokio::fs::remove_file(dest_path).await;
@@ -389,7 +327,8 @@ impl ManagerDownloader {
                     Ok(Some(res)) => res,
                     Ok(None) => break,
                     Err(_) => {
-                        stream_err = Some("数据读取超时 (15s)".to_string());
+                        stream_err =
+                            Some(t!("error.stream_read_timeout", seconds = "15").to_string());
                         break;
                     }
                 };
@@ -437,7 +376,7 @@ impl ManagerDownloader {
         let meta = tokio::fs::metadata(&tmp_path).await?;
         if meta.len() == 0 || total_size.is_some_and(|expected| meta.len() != expected) {
             let _ = tokio::fs::remove_file(&tmp_path).await;
-            return Err(RmvError::KsuFailed("文件大小不匹配".to_string()));
+            return Err(RmvError::KsuFailed(t!("error.size_mismatch").to_string()));
         }
 
         let calculated_hash = format!("{:x}", hasher.finalize());
@@ -448,16 +387,14 @@ impl ManagerDownloader {
         tmp_path: &Path,
         dest_path: &Path,
         calculated_hash: &str,
-        expected_hash: Option<&str>,
+        expected_hash: &str,
     ) -> Result<PathBuf> {
-        if let Some(expected) = expected_hash {
-            if !calculated_hash.eq_ignore_ascii_case(expected) {
-                let _ = tokio::fs::remove_file(tmp_path).await;
-                return Err(RmvError::HashMismatch {
-                    expected: expected.to_string(),
-                    actual: calculated_hash.to_string(),
-                });
-            }
+        if !calculated_hash.eq_ignore_ascii_case(expected_hash) {
+            let _ = tokio::fs::remove_file(tmp_path).await;
+            return Err(RmvError::HashMismatch {
+                expected: expected_hash.to_string(),
+                actual: calculated_hash.to_string(),
+            });
         }
 
         if let Err(e) = tokio::fs::rename(tmp_path, dest_path).await {
@@ -480,9 +417,9 @@ impl ManagerDownloader {
             tokio::time::timeout(std::time::Duration::from_secs(10), client.get(url).send()).await;
         match req_timeout {
             Ok(Ok(r)) if r.status().is_success() => Ok(r),
-            Ok(Ok(r)) => Err(format!("HTTP 状态码: {}", r.status())),
+            Ok(Ok(r)) => Err(t!("error.http_status", status = r.status().to_string()).to_string()),
             Ok(Err(e)) => Err(e.to_string()),
-            Err(_) => Err("连接超时 (10s)".to_string()),
+            Err(_) => Err(t!("error.connect_timeout", seconds = "10").to_string()),
         }
     }
 
@@ -497,7 +434,7 @@ impl ManagerDownloader {
         let (tmp_path, calculated_hash) =
             Self::stream_to_temp(resp, cache_dir, dest_filename, event_tx).await?;
         let promoted =
-            Self::verify_and_promote(&tmp_path, dest_path, &calculated_hash, asset_info.sha256)
+            Self::verify_and_promote(&tmp_path, dest_path, &calculated_hash, &asset_info.sha256)
                 .await?;
         if let Some(tx) = event_tx {
             let _ = tx.send(EngineEvent::Log {
@@ -519,7 +456,7 @@ impl ManagerDownloader {
         asset_info: &ManagerAssetInfo,
         event_tx: Option<&UnboundedSender<EngineEvent>>,
     ) -> Result<Option<PathBuf>> {
-        if Self::reuse_cached(dest_path, asset_info.sha256).await? {
+        if Self::reuse_cached(dest_path, &asset_info.sha256).await? {
             if let Some(tx) = event_tx {
                 let meta_len = tokio::fs::metadata(dest_path).await.map_or(0, |m| m.len());
                 let _ = tx.send(EngineEvent::Log {
@@ -567,19 +504,6 @@ impl ManagerDownloader {
             Self::try_reuse_cache(&dest_path, &dest_filename, &asset_info, event_tx).await?
         {
             return Ok(cached);
-        }
-
-        if asset_info.sha256.is_none() {
-            if let Some(tx) = event_tx {
-                let _ = tx.send(EngineEvent::Log {
-                    level: LogLevel::Warn,
-                    line: t!(
-                        "log.manager_unverified_hash",
-                        version = asset_info.version.clone()
-                    )
-                    .to_string(),
-                });
-            }
         }
 
         let download_urls =
@@ -687,28 +611,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_static_assets_completeness() {
-        for variant in KsuVariant::all_variants() {
-            let asset = get_static_asset(*variant);
-            assert_eq!(asset.variant(), *variant);
-            assert!(!asset.version.is_empty());
-            assert!(std::path::Path::new(&asset.filename)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("apk")));
-            assert!(asset.download_url.starts_with("https://github.com/"));
-        }
-    }
-
-    #[test]
     fn test_select_best_apk() {
         let assets = vec![
             GithubAsset {
                 name: "KernelSU_Next_v3.4.0_33294-spoofed_33294-release.apk".to_string(),
                 browser_download_url: "url1".to_string(),
+                digest: None,
             },
             GithubAsset {
                 name: "KernelSU_Next_v3.4.0_33294-release.apk".to_string(),
                 browser_download_url: "url2".to_string(),
+                digest: None,
             },
         ];
         let best = select_best_apk(&assets).unwrap();
@@ -718,10 +631,12 @@ mod tests {
             GithubAsset {
                 name: "ReSukiSU_v4.2.0-rc3_35171-universal-release.apk".to_string(),
                 browser_download_url: "url_uni".to_string(),
+                digest: None,
             },
             GithubAsset {
                 name: "ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk".to_string(),
                 browser_download_url: "url_arm64".to_string(),
+                digest: None,
             },
         ];
         let best_resukisu = select_best_apk(&resukisu_assets).unwrap();
@@ -765,7 +680,7 @@ mod tests {
             version: "v3.3.0".to_string(),
             filename: "fake.apk".to_string(),
             download_url: target_url.clone(),
-            sha256: Some("0000000000000000000000000000000000000000000000000000000000000000"),
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
         };
 
         // Execute download directly with fake asset
@@ -791,7 +706,7 @@ mod tests {
         drop(file);
 
         let calculated = format!("{:x}", hasher.finalize());
-        let expected = fake_asset.sha256.unwrap();
+        let expected = fake_asset.sha256.as_str();
         assert_ne!(calculated, expected);
 
         let res: Result<()> = if calculated.eq_ignore_ascii_case(expected) {

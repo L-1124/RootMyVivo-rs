@@ -3,9 +3,39 @@ use adb_client::ADBDeviceExt;
 use async_trait::async_trait;
 use std::net::SocketAddrV4;
 use std::path::Path;
+use std::time::Duration;
+use tokio::time::timeout;
 
 use crate::error::{Result, RmvError};
 use crate::transport::{ExecOutput, Transport};
+
+/// Upper bound for a single blocking ADB operation on the client transport.
+/// Mirrors the per-operation budgets of the CLI fallback transport; without it
+/// a wedged adbd would stall the engine polling loop forever.
+const CLIENT_OP_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Runs a blocking ADB server call with a hard wall-clock deadline.
+async fn with_timeout<T, F>(action: &str, f: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    match timeout(CLIENT_OP_TIMEOUT, tokio::task::spawn_blocking(f)).await {
+        Ok(joined) => joined.map_err(|e| RmvError::Adb {
+            message: format!("Task execution failed: {e}"),
+            code: None,
+        })?,
+        Err(_) => Err(RmvError::Adb {
+            message: rust_i18n::t!(
+                "error.adb_timeout",
+                action = action,
+                seconds = CLIENT_OP_TIMEOUT.as_secs().to_string()
+            )
+            .to_string(),
+            code: None,
+        }),
+    }
+}
 
 /// Pure-Rust ADB `SmartSocket` client transport implementation.
 #[derive(Debug, Clone)]
@@ -40,7 +70,7 @@ impl Transport for AdbClientTransport {
     async fn exec(&self, cmd: &str) -> Result<ExecOutput> {
         let mut dev = self.get_device();
         let cmd = cmd.to_string();
-        tokio::task::spawn_blocking(move || {
+        with_timeout("shell", move || {
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
             let exit_code = dev
@@ -59,17 +89,13 @@ impl Transport for AdbClientTransport {
             })
         })
         .await
-        .map_err(|e| RmvError::Adb {
-            message: format!("Task execution failed: {e}"),
-            code: None,
-        })?
     }
 
     async fn push(&self, local_path: &Path, remote_path: &str) -> Result<()> {
         let mut dev = self.get_device();
         let local = local_path.to_path_buf();
         let remote = remote_path.to_string();
-        tokio::task::spawn_blocking(move || {
+        with_timeout("push", move || {
             let mut file = std::fs::File::open(&local).map_err(RmvError::Io)?;
             dev.push(&mut file, &remote).map_err(|e| RmvError::Adb {
                 message: format!("Failed to push to {remote}: {e}"),
@@ -78,17 +104,13 @@ impl Transport for AdbClientTransport {
             Ok(())
         })
         .await
-        .map_err(|e| RmvError::Adb {
-            message: format!("Task join failed: {e}"),
-            code: None,
-        })?
     }
 
     async fn pull(&self, remote_path: &str, local_path: &Path) -> Result<()> {
         let mut dev = self.get_device();
         let local = local_path.to_path_buf();
         let remote = remote_path.to_string();
-        tokio::task::spawn_blocking(move || {
+        with_timeout("pull", move || {
             let mut file = std::fs::File::create(&local).map_err(RmvError::Io)?;
             dev.pull(&remote, &mut file).map_err(|e| RmvError::Adb {
                 message: format!("Failed to pull {remote}: {e}"),
@@ -97,17 +119,13 @@ impl Transport for AdbClientTransport {
             Ok(())
         })
         .await
-        .map_err(|e| RmvError::Adb {
-            message: format!("Task join failed: {e}"),
-            code: None,
-        })?
     }
 
     async fn push_bytes(&self, data: &[u8], remote_path: &str, mode: u32) -> Result<()> {
         let mut dev = self.get_device();
         let data = data.to_vec();
         let remote = remote_path.to_string();
-        tokio::task::spawn_blocking(move || {
+        with_timeout("push", move || {
             let mut cursor = std::io::Cursor::new(data);
             dev.push(&mut cursor, &remote).map_err(|e| RmvError::Adb {
                 message: format!("Failed to push bytes to {remote}: {e}"),
@@ -118,16 +136,12 @@ impl Transport for AdbClientTransport {
             Ok(())
         })
         .await
-        .map_err(|e| RmvError::Adb {
-            message: format!("Task join failed: {e}"),
-            code: None,
-        })?
     }
 
     async fn pull_bytes(&self, remote_path: &str) -> Result<Vec<u8>> {
         let mut dev = self.get_device();
         let remote = remote_path.to_string();
-        tokio::task::spawn_blocking(move || {
+        with_timeout("pull", move || {
             let mut output = Vec::new();
             dev.pull(&remote, &mut output).map_err(|e| RmvError::Adb {
                 message: format!("Failed to pull bytes from {remote}: {e}"),
@@ -136,10 +150,6 @@ impl Transport for AdbClientTransport {
             Ok(output)
         })
         .await
-        .map_err(|e| RmvError::Adb {
-            message: format!("Task join failed: {e}"),
-            code: None,
-        })?
     }
 
     async fn is_alive(&self) -> bool {

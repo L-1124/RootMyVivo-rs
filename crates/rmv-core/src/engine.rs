@@ -116,6 +116,34 @@ fn emit_log(
     });
 }
 
+/// Emits the failed status, sweeps device-side artifacts, and returns `err` for propagation.
+/// Single exit for every post-deploy error path so no failure leaves the payload
+/// or inject daemon behind on the device.
+async fn fail_with_cleanup<T: Transport>(
+    transport: &T,
+    event_tx: &UnboundedSender<EngineEvent>,
+    captured_logs: &mut Vec<String>,
+    err: RmvError,
+) -> RmvError {
+    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+    if let Ok(log_exec) = transport
+        .exec("cat /data/local/tmp/rmv/live.log 2>/dev/null")
+        .await
+    {
+        for line in log_exec.combined().lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                append_captured_log(captured_logs, trimmed);
+            }
+        }
+    }
+    let _ = transport
+        .exec("pkill -9 -x true 2>/dev/null; pkill -f '[p]reload.so' 2>/dev/null")
+        .await;
+    let _ = Persistence::clean_traces(transport).await;
+    err
+}
+
 impl ExploitEngine {
     /// Creates a new `ExploitEngine` with a configured local working directory.
     pub fn new(work_dir: impl AsRef<Path>) -> Self {
@@ -254,26 +282,16 @@ impl ExploitEngine {
             .stage1_device_check(transport, options, event_tx, captured_logs, total_steps)
             .await?;
 
-        // 实时同步 Stage 1 结果至本地历史
-        if options.save_history && !options.dry_run {
-            let step1_rec = RunRecord {
-                id: record_id.to_string(),
-                timestamp: timestamp.to_string(),
-                device_model: device.model.clone(),
-                device_code: device.device.clone(),
-                kernel: device.kernel_full.clone(),
-                payload: options
-                    .custom_payload
-                    .as_ref()
-                    .map_or_else(|| "-".to_string(), |p| p.display().to_string()),
-                ksu_variant: options.ksu_variant.display_name().to_string(),
-                success: false,
-                status: Some(RunStatus::Running),
-                message: t!("phase.in_progress").to_string(),
-                logs: captured_logs.clone(),
-            };
-            let _ = HistoryManager::save_record(&HistoryManager::default_dir(), &step1_rec).await;
-        }
+        self.sync_history_snapshot(
+            options,
+            &device,
+            "-",
+            record_id,
+            timestamp,
+            captured_logs,
+            t!("phase.in_progress"),
+        )
+        .await;
 
         // Stage 2: Payload Resolution & Verification
         let payload_local_path = self
@@ -305,14 +323,19 @@ impl ExploitEngine {
         }
 
         // Stage 3: Payload Deployment
-        self.stage3_deploy_payload(
-            transport,
-            options,
-            &payload_local_path,
-            event_tx,
-            total_steps,
-        )
-        .await?;
+        if let Err(e) = self
+            .stage3_deploy_payload(
+                transport,
+                options,
+                &payload_local_path,
+                event_tx,
+                total_steps,
+            )
+            .await
+        {
+            let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
+            return Err(e);
+        }
 
         // Stage 4: Exploit Execution & Root Attainment
         let already_rooted = self
@@ -330,23 +353,16 @@ impl ExploitEngine {
             emit_log(event_tx, captured_logs, LogLevel::Ok, t!("log.uid0_ok"));
         }
 
-        // 实时同步 Stage 4 (UID=0 达成) 结果至本地历史
-        if options.save_history && !options.dry_run {
-            let root_rec = RunRecord {
-                id: record_id.to_string(),
-                timestamp: timestamp.to_string(),
-                device_model: device.model.clone(),
-                device_code: device.device.clone(),
-                kernel: device.kernel_full.clone(),
-                payload: payload_local_path.display().to_string(),
-                ksu_variant: options.ksu_variant.display_name().to_string(),
-                success: false,
-                status: Some(RunStatus::Running),
-                message: t!("log.uid0_ok").to_string(),
-                logs: captured_logs.clone(),
-            };
-            let _ = HistoryManager::save_record(&HistoryManager::default_dir(), &root_rec).await;
-        }
+        self.sync_history_snapshot(
+            options,
+            &device,
+            &payload_local_path.display().to_string(),
+            record_id,
+            timestamp,
+            captured_logs,
+            t!("log.uid0_ok"),
+        )
+        .await;
 
         // Stage 5: KernelSU Setup & Late-Load
         let ksu_ok = self
@@ -364,6 +380,40 @@ impl ExploitEngine {
             .await?;
 
         Ok((device, payload_local_path, RunStatus::Pass, finalize_msg))
+    }
+
+    /// Persists an in-flight `Running` snapshot of the current pipeline state to history.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Flat field list mirrors RunRecord without wrapping structs"
+    )]
+    async fn sync_history_snapshot(
+        &self,
+        options: &EngineOptions,
+        device: &DeviceInfo,
+        payload: &str,
+        record_id: &str,
+        timestamp: &str,
+        captured_logs: &[String],
+        message: impl Into<String>,
+    ) {
+        if !options.save_history || options.dry_run {
+            return;
+        }
+        let rec = RunRecord {
+            id: record_id.to_string(),
+            timestamp: timestamp.to_string(),
+            device_model: device.model.clone(),
+            device_code: device.device.clone(),
+            kernel: device.kernel_full.clone(),
+            payload: payload.to_string(),
+            ksu_variant: options.ksu_variant.display_name().to_string(),
+            success: false,
+            status: Some(RunStatus::Running),
+            message: message.into(),
+            logs: captured_logs.to_vec(),
+        };
+        let _ = HistoryManager::save_record(&HistoryManager::default_dir(), &rec).await;
     }
 
     async fn stage1_device_check<T: Transport>(
@@ -505,7 +555,7 @@ impl ExploitEngine {
                     .as_ref()
                     .ok_or_else(|| RmvError::PayloadNotFound {
                         device: device.model.clone(),
-                        kernel: "匹配成功但该构建未提供下载文件".to_string(),
+                        kernel: t!("error.matched_build_no_file").to_string(),
                     })?;
 
             let _ = event_tx.send(EngineEvent::Log {
@@ -562,7 +612,7 @@ impl ExploitEngine {
         let remote_dir = "/data/local/tmp/rmv";
         let remote_so = "/data/local/tmp/rmv/preload.so";
         let prep_cmd = format!(
-            "mkdir -p {} {}/rmv && rm -f {} /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE /data/local/tmp/rmv/live.log",
+            "mkdir -p {} {}/rmv && rm -f {} /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE /data/local/tmp/rmv/live.log /data/local/tmp/rmv/daemon.pid",
             sh_quote(remote_dir),
             sh_quote(remote_dir),
             sh_quote(remote_so)
@@ -598,7 +648,13 @@ impl ExploitEngine {
         wait_boot_completed(transport, event_tx).await;
         refresh_boot_id(transport, device).await;
 
-        if check_root_status(transport).await?.is_rooted() {
+        let root_status = match check_root_status(transport).await {
+            Ok(status) => status,
+            Err(e) => {
+                return Err(fail_with_cleanup(transport, event_tx, captured_logs, e).await);
+            }
+        };
+        if root_status.is_rooted() {
             let _ = event_tx.send(EngineEvent::Log {
                 level: LogLevel::Ok,
                 line: t!("log.root_already").to_string(),
@@ -608,82 +664,11 @@ impl ExploitEngine {
 
         let remote_dir = "/data/local/tmp/rmv";
         let remote_so = "/data/local/tmp/rmv/preload.so";
-        launch_exploit(transport, options, remote_dir, remote_so).await?;
-
-        let timeout_limit = options.timeout_secs;
-        let mut elapsed_sec = 0u64;
-        let mut last_log_tail = String::new();
-        let mut last_attempt: Option<u32> = None;
-        let mut is_rooted = false;
-        let mut boot_poisoned = false;
-        let mut attempts_exhausted = false;
-        let mut process_exited = false;
-        let probe_cmd = build_probe_cmd(remote_dir);
-
-        while timeout_limit == 0 || elapsed_sec < timeout_limit {
-            sleep(Duration::from_secs(2)).await;
-            elapsed_sec += 2;
-
-            let probe_exec = transport.exec(&probe_cmd).await?;
-            let probe = parse_probe_output(&probe_exec.combined());
-
-            handle_probe_logs(
-                &probe,
-                &mut last_log_tail,
-                &mut last_attempt,
-                options.attempts,
-                event_tx,
-                captured_logs,
-            );
-
-            match probe.outcome {
-                ProbeOutcome::Rooted => {
-                    is_rooted = true;
-                    break;
-                }
-                ProbeOutcome::BootPoisoned => {
-                    boot_poisoned = true;
-                }
-                ProbeOutcome::DoneSuccess => {
-                    if check_su_polling(transport).await {
-                        is_rooted = true;
-                        break;
-                    }
-                }
-                ProbeOutcome::DoneFailed => {
-                    attempts_exhausted = true;
-                    break;
-                }
-                ProbeOutcome::DaemonExited if elapsed_sec >= 6 => {
-                    process_exited = true;
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Error,
-                        line: t!("log.exploit_gone").to_string(),
-                    });
-                    break;
-                }
-                ProbeOutcome::DaemonAlive | ProbeOutcome::DaemonExited => {}
-            }
+        if let Err(e) = launch_exploit(transport, options, remote_dir, remote_so).await {
+            return Err(fail_with_cleanup(transport, event_tx, captured_logs, e).await);
         }
 
-        if !is_rooted {
-            classify_failure(
-                transport,
-                last_attempt,
-                &ExploitFailureState {
-                    boot_poisoned,
-                    attempts_exhausted,
-                    process_exited,
-                    max_attempts: options.attempts,
-                    last_log_tail,
-                },
-                event_tx,
-                captured_logs,
-            )
-            .await?;
-        }
-
-        Ok(false)
+        poll_exploit_until_root(transport, options, remote_dir, event_tx, captured_logs).await
     }
 
     async fn stage5_setup_ksu<T: Transport>(
@@ -1009,7 +994,7 @@ fn build_probe_cmd(remote_dir: &str) -> String {
     format!(
         "tail -n 15 {remote_dir}/live.log 2>/dev/null; \
          echo __RMV_DONE__; cat {remote_dir}/DONE {remote_dir}/rmv/DONE 2>/dev/null | head -n 1; \
-         echo __RMV_ALIVE__; pgrep -x true 2>/dev/null || pgrep -f preload.so 2>/dev/null; \
+         echo __RMV_ALIVE__; p={remote_dir}/daemon.pid; [ -f $p ] && kill -0 $(cat $p) 2>/dev/null && echo alive; \
          echo __RMV_SU__; [ -e {remote_dir}/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf {remote_dir}/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null; [ -e {remote_dir}/su ] && [ ! -e /data/local/tmp/su ] && ln -sf {remote_dir}/su /data/local/tmp/su 2>/dev/null; RMV_HOME={remote_dir} {remote_dir}/su -c id 2>/dev/null || /data/local/tmp/su -c id 2>/dev/null || /system/bin/su -c id 2>/dev/null; \
          echo __RMV_END__"
     )
@@ -1086,10 +1071,10 @@ async fn launch_exploit<T: Transport>(
     remote_so: &str,
 ) -> Result<()> {
     let _ = transport
-        .exec("pkill -9 -x true 2>/dev/null; rm -f /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE /data/local/tmp/rmv/live.log")
+        .exec("pkill -9 -x true 2>/dev/null; rm -f /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE /data/local/tmp/rmv/live.log /data/local/tmp/rmv/daemon.pid")
         .await;
     let run_cmd = format!(
-        "cd {} && (RMV_HOME={} RMV_ATTEMPTS={} RMV_RETRY_DELAY={} LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 &)",
+        "cd {} && (RMV_HOME={} RMV_ATTEMPTS={} RMV_RETRY_DELAY={} LD_PRELOAD={} /system/bin/true > /data/local/tmp/rmv/live.log 2>&1 & echo $! > /data/local/tmp/rmv/daemon.pid)",
         sh_quote(remote_dir),
         sh_quote(remote_dir),
         sh_quote(&options.attempts.to_string()),
@@ -1180,29 +1165,14 @@ async fn classify_failure<T: Transport>(
     event_tx: &UnboundedSender<EngineEvent>,
     captured_logs: &mut Vec<String>,
 ) -> Result<()> {
-    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Failed));
-    if let Ok(log_exec) = transport
-        .exec("cat /data/local/tmp/rmv/live.log 2>/dev/null")
-        .await
-    {
-        for line in log_exec.combined().lines() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                append_captured_log(captured_logs, trimmed);
-            }
-        }
-    }
-    let _ = transport
-        .exec("pkill -9 -x true 2>/dev/null; pkill -f preload.so 2>/dev/null")
-        .await;
-    let _ = Persistence::clean_traces(transport).await;
-
     if state.boot_poisoned {
         let _ = event_tx.send(EngineEvent::Log {
             level: LogLevel::Error,
             line: t!("log.boot_poisoned").to_string(),
         });
-        return Err(RmvError::BootPoisoned);
+        return Err(
+            fail_with_cleanup(transport, event_tx, captured_logs, RmvError::BootPoisoned).await,
+        );
     }
 
     if state.attempts_exhausted {
@@ -1216,18 +1186,127 @@ async fn classify_failure<T: Transport>(
             level: LogLevel::Error,
             line: err_msg.clone(),
         });
-        return Err(RmvError::ExploitFailed(err_msg));
+        return Err(fail_with_cleanup(
+            transport,
+            event_tx,
+            captured_logs,
+            RmvError::ExploitFailed(err_msg),
+        )
+        .await);
     }
 
     if state.process_exited {
         let err_msg = t!("error.exploit_process_exited").to_string();
-        return Err(RmvError::ExploitFailed(err_msg));
+        return Err(fail_with_cleanup(
+            transport,
+            event_tx,
+            captured_logs,
+            RmvError::ExploitFailed(err_msg),
+        )
+        .await);
     }
 
-    Err(RmvError::ExploitTimeout {
+    Err(fail_with_cleanup(
+        transport,
+        event_tx,
+        captured_logs,
+        RmvError::ExploitTimeout {
+            last_attempt,
+            log_tail: state.last_log_tail.clone(),
+        },
+    )
+    .await)
+}
+
+/// Polls the exploit daemon until root is achieved, the timeout elapses, or a
+/// terminal outcome is observed; classifies any non-root exit with cleanup.
+async fn poll_exploit_until_root<T: Transport>(
+    transport: &T,
+    options: &EngineOptions,
+    remote_dir: &str,
+    event_tx: &UnboundedSender<EngineEvent>,
+    captured_logs: &mut Vec<String>,
+) -> Result<bool> {
+    let timeout_limit = options.timeout_secs;
+    let mut elapsed_sec = 0u64;
+    let mut last_log_tail = String::new();
+    let mut last_attempt: Option<u32> = None;
+    let mut is_rooted = false;
+    let mut boot_poisoned = false;
+    let mut attempts_exhausted = false;
+    let mut process_exited = false;
+    let probe_cmd = build_probe_cmd(remote_dir);
+
+    while timeout_limit == 0 || elapsed_sec < timeout_limit {
+        sleep(Duration::from_secs(2)).await;
+        elapsed_sec += 2;
+
+        let probe_exec = match transport.exec(&probe_cmd).await {
+            Ok(out) => out,
+            Err(e) => {
+                return Err(fail_with_cleanup(transport, event_tx, captured_logs, e).await);
+            }
+        };
+        let probe = parse_probe_output(&probe_exec.combined());
+
+        handle_probe_logs(
+            &probe,
+            &mut last_log_tail,
+            &mut last_attempt,
+            options.attempts,
+            event_tx,
+            captured_logs,
+        );
+
+        match probe.outcome {
+            ProbeOutcome::Rooted => {
+                is_rooted = true;
+                break;
+            }
+            ProbeOutcome::BootPoisoned => {
+                boot_poisoned = true;
+            }
+            ProbeOutcome::DoneSuccess => {
+                if check_su_polling(transport).await {
+                    is_rooted = true;
+                    break;
+                }
+            }
+            ProbeOutcome::DoneFailed => {
+                attempts_exhausted = true;
+                break;
+            }
+            ProbeOutcome::DaemonExited if elapsed_sec >= 6 => {
+                process_exited = true;
+                let _ = event_tx.send(EngineEvent::Log {
+                    level: LogLevel::Error,
+                    line: t!("log.exploit_gone").to_string(),
+                });
+                break;
+            }
+            ProbeOutcome::DaemonAlive | ProbeOutcome::DaemonExited => {}
+        }
+    }
+
+    if is_rooted {
+        return Ok(false);
+    }
+
+    classify_failure(
+        transport,
         last_attempt,
-        log_tail: state.last_log_tail.clone(),
-    })
+        &ExploitFailureState {
+            boot_poisoned,
+            attempts_exhausted,
+            process_exited,
+            max_attempts: options.attempts,
+            last_log_tail,
+        },
+        event_tx,
+        captured_logs,
+    )
+    .await?;
+    Ok(false)
 }
 
 #[cfg(test)]

@@ -105,7 +105,7 @@ pub const ROOT_PROBE_CMD: &str = "\
     echo __RMV_SYS_SU__; /system/bin/su -c id 2>/dev/null; \
     echo __RMV_TMP_SU__; [ -e /data/local/tmp/rmv/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf /data/local/tmp/rmv/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null; [ -e /data/local/tmp/rmv/su ] && [ ! -e /data/local/tmp/su ] && ln -sf /data/local/tmp/rmv/su /data/local/tmp/su 2>/dev/null; if [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c id 2>/dev/null && echo RMV_PATH_RMV; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c id 2>/dev/null && echo RMV_PATH_TMP; fi; \
     echo __RMV_BARE_SU__; su -c id 2>/dev/null; \
-    echo __RMV_MAPS__; pgrep -x true 2>/dev/null || pgrep -f preload.so 2>/dev/null; \
+    echo __RMV_MAPS__; p=/data/local/tmp/rmv/daemon.pid; [ -f $p ] && kill -0 $(cat $p) 2>/dev/null && echo alive; \
     echo __RMV_DONE__; cat /data/local/tmp/rmv/DONE /data/local/tmp/rmv/rmv/DONE 2>/dev/null | head -n 1; \
     echo __RMV_END__";
 
@@ -310,7 +310,7 @@ pub fn parse_kernel_details(proc_version: &str) -> Result<KernelDetails> {
         .captures(proc_version)
         .ok_or_else(|| RmvError::UnsupportedKernel {
             version: proc_version.to_string(),
-            reason: "无法从 /proc/version 中提取主次版本号".to_string(),
+            reason: t!("error.kernel_version_unparseable").to_string(),
         })?;
 
     let major: u32 = caps[1].parse().unwrap_or(0);

@@ -50,9 +50,6 @@ pub enum RmvError {
     /// Previous exploit failure left kernel memory poisoned.
     #[error("Kernel slab memory poisoned by previous exploit; reboot required")]
     BootPoisoned,
-    /// Device kernel panic or unexpected reboot during exploit.
-    #[error("Device unexpectedly rebooted during exploit execution (kernel panic suspected)")]
-    DeviceRebooted,
     /// Exploit daemon process exited prematurely or returned failure.
     #[error("Exploit failed: {0}")]
     ExploitFailed(String),
@@ -99,9 +96,12 @@ impl RmvError {
                 rust_i18n::t!("error.hash_mismatch", expected = expected, actual = actual)
                     .to_string()
             }
-            Self::ExploitTimeout { .. } => rust_i18n::t!("error.exploit_timeout").to_string(),
+            Self::ExploitTimeout { last_attempt, .. } => rust_i18n::t!(
+                "error.exploit_timeout",
+                attempts = last_attempt.map_or("-".to_string(), |a| a.to_string())
+            )
+            .to_string(),
             Self::BootPoisoned => rust_i18n::t!("error.boot_poisoned").to_string(),
-            Self::DeviceRebooted => rust_i18n::t!("error.device_rebooted").to_string(),
             Self::ExploitFailed(s) => {
                 rust_i18n::t!("error.exploit_failed", message = s).to_string()
             }

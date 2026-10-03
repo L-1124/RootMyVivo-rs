@@ -227,14 +227,17 @@ impl HistoryManager {
         format_epoch_seconds(secs)
     }
 
-    /// Generates a random alphanumeric record ID.
+    /// Generates a unique record ID: millisecond timestamp mixed with a process-wide
+    /// atomic counter so concurrent fleet workers never collide within the same ms.
     #[must_use]
     pub fn new_record_id() -> String {
+        static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let duration = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default();
-        let millis = duration.as_millis();
-        format!("{:08x}", (millis & 0xffff_ffff) as u32)
+        let millis = u32::try_from(duration.as_millis()).unwrap_or(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        format!("{:08x}", millis ^ seq.rotate_left(16))
     }
 }
 
