@@ -1,0 +1,7 @@
+disallowed-methods = [
+  { path = "std::process::exit", reason = "Return `ExitCode` from `main`; a deep exit skips cleanup" },
+  { path = "std::thread::sleep", reason = "Use `tokio::time::sleep` in async context" },
+]
+disallowed-types = [
+  { path = "std::sync::Mutex", reason = "Use `tokio::sync::Mutex` in async context" },
+]

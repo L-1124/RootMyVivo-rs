@@ -32,3 +32,22 @@ rust-i18n = "3"
 sys-locale = "0.3"
 adb_client = { version = "3.2", default-features = false }
 mdns-sd = "0.11"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_crate_dependencies = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
+
+unwrap_used = "warn"
+expect_used = "warn"
+disallowed_methods = "warn"
+disallowed_types = "warn"

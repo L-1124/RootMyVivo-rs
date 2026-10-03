@@ -1,3 +1,6 @@
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+#![cfg_attr(not(test), warn(clippy::print_stdout, clippy::print_stderr))]
+
 rust_i18n::i18n!("locales", fallback = "en");
 pub use rust_i18n::t;
 

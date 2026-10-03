@@ -1,0 +1,27 @@
+default_stages: [pre-commit]
+fail_fast: false
+
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: cargo fmt --all -- --check
+        language: system
+        pass_filenames: false
+        files: \.rs$
+
+      - id: cargo-clippy
+        name: cargo clippy --workspace --all-targets
+        entry: cargo clippy --workspace --all-targets
+        language: system
+        pass_filenames: false
+        files: \.(rs|toml)$
+
+      - id: cargo-test
+        name: cargo test --workspace
+        entry: cargo test --workspace
+        language: system
+        pass_filenames: false
+        files: \.(rs|toml)$
+        stages: [pre-push]
