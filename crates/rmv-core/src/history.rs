@@ -9,6 +9,7 @@ pub const MAX_HISTORY_RECORDS: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
+#[non_exhaustive]
 pub enum RunStatus {
     Pass,
     Partial,
@@ -60,10 +61,7 @@ pub struct HistoryManager;
 
 impl HistoryManager {
     pub fn default_dir() -> PathBuf {
-        let base = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(base).join(".rmv").join("history")
+        crate::paths::history_dir()
     }
 
     pub async fn save_record(dir: &Path, record: &RunRecord) -> Result<PathBuf> {
@@ -142,7 +140,7 @@ impl HistoryManager {
         }
 
         // 按最后修改时间降序排序
-        files.sort_by(|a, b| b.1.cmp(&a.1));
+        files.sort_by_key(|a| std::cmp::Reverse(a.1));
 
         let mut removed = 0;
         for (path, _) in files.iter().skip(max_keep) {
@@ -164,10 +162,10 @@ impl HistoryManager {
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                if fs::remove_file(&path).await.is_ok() {
-                    count += 1;
-                }
+            if path.extension().and_then(|s| s.to_str()) == Some("json")
+                && fs::remove_file(&path).await.is_ok()
+            {
+                count += 1;
             }
         }
 
@@ -250,7 +248,7 @@ mod tests {
     fn test_format_epoch_seconds() {
         assert_eq!(format_epoch_seconds(0), "1970-01-01 00:00:00");
         // 2026-09-27 00:00:00 UTC = 1790467200
-        let s = format_epoch_seconds(1790467200);
+        let s = format_epoch_seconds(1_790_467_200);
         assert!(s.starts_with("2026-09-27"));
     }
 

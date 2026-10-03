@@ -17,10 +17,13 @@ futures-util.workspace = true
 tracing.workspace = true
 rust-i18n.workspace = true
 adb_client = { workspace = true }
-tokio = { version = "1.43", features = ["full"] }
+tokio = { workspace = true }
 reqwest = { workspace = true }
 sys-locale = { workspace = true }
 mdns-sd = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

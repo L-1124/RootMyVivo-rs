@@ -5,9 +5,11 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::error::{Result, RmvError};
+use crate::quote::sh_quote;
 use crate::transport::Transport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum KsuVariant {
     KernelSU,
     KernelSuNext,
@@ -77,14 +79,14 @@ impl KsuOrchestrator {
     pub async fn is_module_loaded<T: Transport>(transport: &T) -> Result<bool> {
         // /proc/modules 受 SELinux 限制，需通过 root 读取
         let cmd = "sh -c 'if [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c \"cat /proc/modules\" 2>/dev/null; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c \"cat /proc/modules\" 2>/dev/null; elif [ -x /system/bin/su ]; then /system/bin/su -c \"cat /proc/modules\" 2>/dev/null; else cat /proc/modules 2>/dev/null; fi' | grep -i kernelsu";
-        let (_, out) = transport.exec(cmd).await?;
-        Ok(out.to_lowercase().contains("kernelsu"))
+        let out = transport.exec(cmd).await?;
+        Ok(out.combined().to_lowercase().contains("kernelsu"))
     }
 
     pub async fn is_ksu_functional<T: Transport>(transport: &T) -> Result<bool> {
         let cmd = "sh -c 'if [ -x /system/bin/su ]; then /system/bin/su -c id 2>/dev/null; elif command -v su >/dev/null 2>&1; then su -c id 2>/dev/null; else exit 1; fi'";
-        let (code, out) = transport.exec(cmd).await?;
-        Ok(code == 0 && out.contains("uid=0") && out.contains("context=u:r:ksu"))
+        let out = transport.exec(cmd).await?;
+        Ok(out.success() && out.stdout.contains("uid=0") && out.stdout.contains("context=u:r:ksu"))
     }
 
     pub async fn ensure_data_adb_dir<T: Transport>(transport: &T) -> Result<()> {
@@ -126,8 +128,9 @@ impl KsuOrchestrator {
         }
 
         let cmd = "sh -c 'if [ -x /system/bin/su ]; then /system/bin/su -c \"ls -1 /data/adb/modules 2>/dev/null\"; elif [ -x /data/local/tmp/rmv/su ]; then RMV_HOME=/data/local/tmp/rmv /data/local/tmp/rmv/su -c \"ls -1 /data/adb/modules 2>/dev/null\"; elif [ -x /data/local/tmp/su ]; then /data/local/tmp/su -c \"ls -1 /data/adb/modules 2>/dev/null\"; else ls -1 /data/adb/modules 2>/dev/null; fi'";
-        let (_, out) = transport.exec(cmd).await?;
+        let out = transport.exec(cmd).await?;
         let modules: Vec<String> = out
+            .stdout
             .lines()
             .map(|s| s.trim().to_string())
             .filter(|s| {
@@ -143,8 +146,8 @@ impl KsuOrchestrator {
         let start = std::time::Instant::now();
         let timeout_dur = Duration::from_secs(timeout_sec);
         while start.elapsed() < timeout_dur {
-            if let Ok((code, out)) = transport.exec("pm path android 2>/dev/null").await {
-                if code == 0 && out.contains("package:") {
+            if let Ok(out) = transport.exec("pm path android 2>/dev/null").await {
+                if out.success() && out.stdout.contains("package:") {
                     return Ok(true);
                 }
             }
@@ -162,15 +165,18 @@ impl KsuOrchestrator {
         let work_dir = "/data/local/tmp/rmv";
         let default_ksud = "/data/local/tmp/rmv/ksud";
 
-        let _ = transport.exec(&format!("mkdir -p {}", work_dir)).await?;
+        let _ = transport
+            .exec(&format!("mkdir -p {}", sh_quote(work_dir)))
+            .await?;
 
-        let (check_code, check_out) = transport
+        let check_out = transport
             .exec(&format!(
                 "test -x {} && {} --version",
-                default_ksud, default_ksud
+                sh_quote(default_ksud),
+                sh_quote(default_ksud)
             ))
             .await?;
-        if check_code == 0 && check_out.contains("ksud") {
+        if check_out.success() && check_out.stdout.contains("ksud") {
             return Ok((default_ksud.to_string(), variant.package_name().to_string()));
         }
 
@@ -179,10 +185,13 @@ impl KsuOrchestrator {
         // 1. 首选：从设备上已安装的用户指定变种 APK 中提取
         let script = format!(
             "APK=$(pm path {} 2>/dev/null | head -n 1 | cut -d: -f2); if [ -n \"$APK\" ] && [ -f \"$APK\" ]; then unzip -p \"$APK\" lib/arm64-v8a/libksud.so > {} 2>/dev/null; chmod 755 {}; test -x {} && echo \"KSUD_OK\"; fi",
-            primary_pkg, default_ksud, default_ksud, default_ksud
+            sh_quote(primary_pkg),
+            sh_quote(default_ksud),
+            sh_quote(default_ksud),
+            sh_quote(default_ksud)
         );
-        let (code, out) = transport.exec(&script).await?;
-        if code == 0 && out.contains("KSUD_OK") {
+        let out = transport.exec(&script).await?;
+        if out.success() && out.stdout.contains("KSUD_OK") {
             return Ok((default_ksud.to_string(), primary_pkg.to_string()));
         }
 
@@ -193,10 +202,14 @@ impl KsuOrchestrator {
                 if transport.push(apk_path, remote_apk).await.is_ok() {
                     let extract_script = format!(
                         "unzip -p {} lib/arm64-v8a/libksud.so > {} 2>/dev/null; rm -f {}; chmod 755 {}; test -x {} && echo KSUD_OK",
-                        remote_apk, default_ksud, remote_apk, default_ksud, default_ksud
+                        sh_quote(remote_apk),
+                        sh_quote(default_ksud),
+                        sh_quote(remote_apk),
+                        sh_quote(default_ksud),
+                        sh_quote(default_ksud)
                     );
-                    let (code, out) = transport.exec(&extract_script).await?;
-                    if code == 0 && out.contains("KSUD_OK") {
+                    let out = transport.exec(&extract_script).await?;
+                    if out.success() && out.stdout.contains("KSUD_OK") {
                         return Ok((default_ksud.to_string(), primary_pkg.to_string()));
                     }
                 }
@@ -214,10 +227,13 @@ impl KsuOrchestrator {
             if pkg != primary_pkg {
                 let script = format!(
                     "APK=$(pm path {} 2>/dev/null | head -n 1 | cut -d: -f2); if [ -n \"$APK\" ] && [ -f \"$APK\" ]; then unzip -p \"$APK\" lib/arm64-v8a/libksud.so > {} 2>/dev/null; chmod 755 {}; test -x {} && echo \"KSUD_OK\"; fi",
-                    pkg, default_ksud, default_ksud, default_ksud
+                    sh_quote(pkg),
+                    sh_quote(default_ksud),
+                    sh_quote(default_ksud),
+                    sh_quote(default_ksud)
                 );
-                let (code, out) = transport.exec(&script).await?;
-                if code == 0 && out.contains("KSUD_OK") {
+                let out = transport.exec(&script).await?;
+                if out.success() && out.stdout.contains("KSUD_OK") {
                     return Ok((default_ksud.to_string(), pkg.to_string()));
                 }
             }
@@ -255,7 +271,7 @@ impl KsuOrchestrator {
                 [ -e /data/local/tmp/rmv/temp_su.sock ] && [ ! -e /data/local/tmp/temp_su.sock ] && ln -sf /data/local/tmp/rmv/temp_su.sock /data/local/tmp/temp_su.sock 2>/dev/null
                 [ -e /data/local/tmp/rmv/su ] && [ ! -e /data/local/tmp/su ] && ln -sf /data/local/tmp/rmv/su /data/local/tmp/su 2>/dev/null
 
-                RUN_CMD="{} late-load --allow-shell --package-name {}"
+                RUN_CMD="$1 late-load --allow-shell --package-name $2"
                 if [ -x /system/bin/su ]; then
                     /system/bin/su -c "$RUN_CMD"
                 elif [ -x /data/local/tmp/rmv/su ]; then
@@ -268,10 +284,13 @@ impl KsuOrchestrator {
                     su -c "$RUN_CMD"
                 fi
                 echo "__RMV_RC=$?"
-            '"#,
-            ksud, pkg
+            ' _ {} {}"#,
+            sh_quote(&ksud),
+            sh_quote(&pkg)
         );
-        let (raw_code, raw_out) = transport.exec(&cmd).await?;
+        let raw_exec = transport.exec(&cmd).await?;
+        let raw_code = raw_exec.code.unwrap_or(-1);
+        let raw_out = raw_exec.combined();
 
         let (real_code, out) = if let Some(pos) = raw_out.rfind("__RMV_RC=") {
             let rc_str = raw_out[pos + 9..].trim();

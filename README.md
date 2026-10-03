@@ -81,7 +81,7 @@ The compiled binary will be located at `target/release/rmv` (or `target/release/
 ### Run Test Suite
 
 ```bash
-# Run all workspace unit tests (19 unit tests across 5 suites)
+# Run all workspace unit tests (36 tests across rmv-core, engine_test, and rmv-cli)
 cargo test --workspace
 
 

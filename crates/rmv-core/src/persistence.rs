@@ -43,8 +43,8 @@ impl Persistence {
             '"#,
             CLEAN
         );
-        if let Ok((code, _)) = transport.exec(&ksu_clean_cmd).await {
-            if code == 0 {
+        if let Ok(out) = transport.exec(&ksu_clean_cmd).await {
+            if out.success() {
                 return Ok(CleanOutcome::WithRoot);
             }
         }
@@ -66,17 +66,17 @@ impl Persistence {
             '"#,
             CLEAN, CLEAN, CLEAN, CLEAN
         );
-        if let Ok((code, _)) = transport.exec(&temp_su_clean_cmd).await {
-            if code == 0 {
+        if let Ok(out) = transport.exec(&temp_su_clean_cmd).await {
+            if out.success() {
                 return Ok(CleanOutcome::WithRoot);
             }
         }
 
         // 3. 无 root 时退回 shell 身份尽力清理
-        let (code, out) = transport.exec(CLEAN).await?;
-        if code != 0 {
+        let out = transport.exec(CLEAN).await?;
+        if !out.success() {
             return Err(RmvError::ExploitFailed(
-                t!("error.clean_traces_failed", error = out.trim()).to_string(),
+                t!("error.clean_traces_failed", error = out.combined().trim()).to_string(),
             ));
         }
         Ok(CleanOutcome::ShellOnly)

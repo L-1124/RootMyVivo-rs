@@ -37,10 +37,7 @@ pub struct CatalogConfig;
 
 impl CatalogConfig {
     pub fn config_path() -> PathBuf {
-        let base = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(base).join(".rmv").join("catalog_url")
+        crate::paths::catalog_url_file()
     }
 
     pub fn get_saved_url() -> Option<String> {
@@ -147,10 +144,7 @@ pub struct CatalogV5 {
 
 impl CatalogV5 {
     pub fn cache_dir() -> PathBuf {
-        let base = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(base).join(".rmv").join("cache")
+        crate::paths::cache_dir()
     }
 
     pub fn cache_file() -> PathBuf {
@@ -164,8 +158,7 @@ impl CatalogV5 {
     pub fn is_fresh(fetched_at: u64, max_age_secs: u64) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         now.saturating_sub(fetched_at) < max_age_secs
     }
 
@@ -191,8 +184,7 @@ impl CatalogV5 {
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
 
         let meta = CatalogCacheMeta {
             url: url.to_string(),

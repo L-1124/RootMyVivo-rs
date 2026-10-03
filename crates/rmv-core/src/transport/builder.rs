@@ -6,6 +6,7 @@ use rust_i18n::t;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TransportMode {
     Auto,
     Client,
@@ -14,9 +15,9 @@ pub enum TransportMode {
 
 impl TransportMode {
     pub fn from_str_opt(s: Option<&str>) -> Self {
-        match s.map(|v| v.to_ascii_lowercase()).as_deref() {
+        match s.map(str::to_ascii_lowercase).as_deref() {
             Some("cli") => Self::Cli,
-            Some("client") | Some("server") | Some("usb") | Some("wifi") => Self::Client,
+            Some("client" | "server" | "usb" | "wifi") => Self::Client,
             _ => Self::Auto,
         }
     }
@@ -107,18 +108,15 @@ impl TransportBuilder {
 
         let mut server = ADBServer::default();
         let server_query = server.devices();
-        let online: Vec<String> = match server_query {
-            Ok(devices) => devices
-                .into_iter()
-                .filter(|d| d.state == adb_client::server::DeviceState::Device)
-                .map(|d| d.identifier)
-                .collect(),
-            // ADB Server 未启动或异常时回退 CLI 子进程（可自动拉起 server）
-            Err(_) => {
-                let cli_devs = AdbCliTransport::list_devices().await.unwrap_or_default();
-                return Ok(cli_devs.into_iter().map(|d| (d.clone(), d)).collect());
-            }
+        let Ok(devices) = server_query else {
+            let cli_devs = AdbCliTransport::list_devices().await.unwrap_or_default();
+            return Ok(cli_devs.into_iter().map(|d| (d.clone(), d)).collect());
         };
+        let online: Vec<String> = devices
+            .into_iter()
+            .filter(|d| d.state == adb_client::server::DeviceState::Device)
+            .map(|d| d.identifier)
+            .collect();
 
         if online.is_empty() {
             let cli_devs = AdbCliTransport::list_devices().await.unwrap_or_default();
@@ -134,7 +132,9 @@ impl TransportBuilder {
             )
             .await
             {
-                Ok(Ok((0, out))) if !out.trim().is_empty() => out.trim().to_string(),
+                Ok(Ok(out)) if out.success() && !out.stdout.trim().is_empty() => {
+                    out.stdout.trim().to_string()
+                }
                 _ => String::new(),
             };
             results.push((dev, model_desc));

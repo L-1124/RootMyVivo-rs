@@ -11,6 +11,9 @@
   },
   "error": {
     "adb": "ADB 通信异常: %{message}",
+    "adb_failed": "ADB 执行 %{action} 失败: %{error}",
+    "adb_timeout": "ADB 执行 %{action} 超时 (%{seconds} 秒)",
+    "adb_cmd_failed": "ADB 命令执行失败 (%{action}): %{error}",
     "device_not_found": "未找到可用设备，请确认已开启 USB 调试并允许电脑调试。",
     "device_offline": "设备处于离线状态或未允许调试。",
     "invalid_url": "无效的 URL 地址 (必须以 http:// 或 https:// 开头): %{url}",
@@ -86,6 +89,7 @@
     "manager_download_ok": "管理器下载完成: %{name} -> %{path}",
     "manager_auto_download": "未检测到本地或已安装的管理器，正在自动下载 %{name}...",
     "manager_installing": "正在向设备安装 %{name} 管理器 APK...",
+    "manager_unverified_hash": "正在下载未固定哈希的最新管理器资产 (%{version})，跳过摘要强校验。",
     "manager_screen_locked": "检测到手机处于锁屏或息屏状态。vivo / OriginOS 在锁屏状态下会默认直接拒绝安装，请先点亮并解锁手机屏幕！",
     "manager_install_prompt": "安装前提示：若手机弹出应用安装安全验证或权限确认，请在手机屏幕上点击「允许」...",
     "manager_install_ok": "管理器 %{name} 安装完成。",

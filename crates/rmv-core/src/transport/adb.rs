@@ -5,8 +5,7 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use super::Transport;
-use crate::device::DeviceInfo;
+use super::{ExecOutput, Transport};
 use crate::error::{Result, RmvError};
 
 async fn run_cmd_with_timeout(
@@ -14,6 +13,7 @@ async fn run_cmd_with_timeout(
     dur: Duration,
     action_desc: &str,
 ) -> Result<std::process::Output> {
+    cmd.kill_on_drop(true);
     match timeout(dur, cmd.output()).await {
         Ok(res) => res.map_err(|e| RmvError::Adb {
             message: t!(
@@ -52,15 +52,13 @@ impl AdbCliTransport {
         }
 
         let devices = Self::list_devices().await.unwrap_or_default();
-        if devices.len() == 1 {
-            Ok(Self::new(Some(devices[0].clone())))
-        } else if devices.len() > 1 {
-            Err(RmvError::Adb {
+        match devices.len() {
+            1 => Ok(Self::new(Some(devices[0].clone()))),
+            n if n > 1 => Err(RmvError::Adb {
                 message: t!("error.multiple_devices", devices = devices.join(", ")).to_string(),
                 code: None,
-            })
-        } else {
-            Ok(Self::new(None))
+            }),
+            _ => Ok(Self::new(None)),
         }
     }
 
@@ -91,25 +89,21 @@ impl AdbCliTransport {
 
 #[async_trait]
 impl Transport for AdbCliTransport {
-    async fn exec(&self, cmd: &str) -> Result<(i32, String)> {
+    async fn exec(&self, cmd: &str) -> Result<ExecOutput> {
         let mut adb_cmd = self.base_cmd();
         adb_cmd.arg("shell").arg(cmd);
 
         let output = run_cmd_with_timeout(adb_cmd, Duration::from_secs(45), "shell").await?;
 
-        let code = output.status.code().unwrap_or(-1);
+        let code = output.status.code();
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-        let combined = if stderr.is_empty() {
-            stdout
-        } else if stdout.is_empty() {
-            stderr
-        } else {
-            format!("{}\n{}", stdout, stderr)
-        };
-
-        Ok((code, combined))
+        Ok(ExecOutput {
+            code,
+            stdout,
+            stderr,
+        })
     }
 
     async fn push(&self, local_path: &Path, remote_path: &str) -> Result<()> {
@@ -165,7 +159,11 @@ impl Transport for AdbCliTransport {
         let _ = tokio::fs::remove_file(&temp_file).await;
         if res.is_ok() && mode != 0 {
             let _ = self
-                .exec(&format!("chmod {:o} {}", mode, remote_path))
+                .exec(&format!(
+                    "chmod {:o} {}",
+                    mode,
+                    crate::quote::sh_quote(remote_path)
+                ))
                 .await;
         }
         res
@@ -196,145 +194,5 @@ impl Transport for AdbCliTransport {
             }
             Err(_) => false,
         }
-    }
-
-    async fn get_device_info(&self) -> Result<DeviceInfo> {
-        if !self.is_alive().await {
-            return Err(RmvError::DeviceNotFound(
-                t!("error.device_offline").to_string(),
-            ));
-        }
-
-        let (_, model) = self.exec("getprop ro.product.model").await?;
-        let (_, device) = self.exec("getprop ro.product.device").await?;
-        let (_, brand) = self.exec("getprop ro.product.brand").await?;
-        let (_, proc_ver) = self.exec("cat /proc/version").await?;
-        let (_, boot_id) = self.exec("cat /proc/sys/kernel/random/boot_id").await?;
-
-        if proc_ver.trim().is_empty() || proc_ver.contains("device offline") {
-            return Err(RmvError::DeviceNotFound(
-                t!("error.cannot_read_proc_version").to_string(),
-            ));
-        }
-
-        DeviceInfo::parse(
-            model.trim(),
-            device.trim(),
-            brand.trim(),
-            proc_ver.trim(),
-            boot_id.trim(),
-        )
-    }
-
-    async fn reboot_and_wait(&self, timeout_sec: u64) -> Result<()> {
-        let initial_boot_id = self
-            .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
-            .await
-            .map(|(_, out)| out.trim().to_string())
-            .unwrap_or_default();
-
-        let mut reboot_cmd = self.base_cmd();
-        reboot_cmd.arg("reboot");
-        let output = run_cmd_with_timeout(reboot_cmd, Duration::from_secs(10), "reboot").await?;
-
-        if !output.status.success() {
-            return Err(RmvError::Adb {
-                message: t!(
-                    "error.adb_cmd_failed",
-                    action = "reboot",
-                    error = String::from_utf8_lossy(&output.stderr).trim()
-                )
-                .to_string(),
-                code: output.status.code(),
-            });
-        }
-
-        let start = std::time::Instant::now();
-        let timeout_dur = Duration::from_secs(timeout_sec);
-
-        // 1. 等待设备断开或初始会话失效
-        while start.elapsed() < Duration::from_secs(30) {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            if let Ok((code, out)) = self
-                .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
-                .await
-            {
-                let cur = out.trim();
-                if code != 0
-                    || cur.is_empty()
-                    || (!initial_boot_id.is_empty() && cur != initial_boot_id)
-                {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        // 2. 等待 adbd 重连，且确认 boot_id 确实已改变
-        let mut new_session_online = false;
-        while start.elapsed() < timeout_dur {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            if let Ok((code, out)) = self
-                .exec("cat /proc/sys/kernel/random/boot_id 2>/dev/null")
-                .await
-            {
-                let cur = out.trim();
-                if code == 0 && !cur.is_empty() {
-                    if initial_boot_id.is_empty() || cur != initial_boot_id {
-                        new_session_online = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if !new_session_online {
-            return Err(RmvError::Adb {
-                message: t!("error.reboot_timeout", seconds = timeout_sec.to_string()).to_string(),
-                code: None,
-            });
-        }
-
-        // 3. 等待 Android 框架系统完全启动 (sys.boot_completed == 1)
-        let mut boot_completed = false;
-        while start.elapsed() < timeout_dur {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            if let Ok((code, out)) = self.exec("getprop sys.boot_completed").await {
-                if code == 0 && out.trim() == "1" {
-                    boot_completed = true;
-                    break;
-                }
-            }
-        }
-        if !boot_completed {
-            return Err(RmvError::Adb {
-                message: t!("error.reboot_timeout", seconds = timeout_sec.to_string()).to_string(),
-                code: None,
-            });
-        }
-
-        // 4. 等待包管理器与系统服务就绪 (pm path android)
-        let mut framework_ready = false;
-        while start.elapsed() < timeout_dur {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            if let Ok((code, out)) = self.exec("pm path android 2>/dev/null").await {
-                if code == 0 && out.contains("package:") {
-                    framework_ready = true;
-                    break;
-                }
-            }
-        }
-        if !framework_ready {
-            return Err(RmvError::Adb {
-                message: t!("error.reboot_timeout", seconds = timeout_sec.to_string()).to_string(),
-                code: None,
-            });
-        }
-
-        // 5. 静默等待 5 秒
-        tokio::time::sleep(Duration::from_secs(5)).await;
-
-        Ok(())
     }
 }

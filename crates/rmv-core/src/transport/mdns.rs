@@ -119,8 +119,6 @@ impl AdbMdnsDiscovery {
                     }
                 }
             }
-
-            std::thread::sleep(Duration::from_millis(100));
         }
 
         let _ = mdns.shutdown();

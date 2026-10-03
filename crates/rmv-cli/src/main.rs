@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 use colored::Colorize;
 rust_i18n::i18n!("../rmv-core/locales", fallback = "en");
 
@@ -23,6 +24,7 @@ struct Cli {
 
     #[arg(long, global = true, default_value_t = false)]
     log_json: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -70,12 +72,6 @@ enum Commands {
 
         #[arg(long, default_value_t = false)]
         reboot_first: bool,
-
-        #[arg(long, default_value_t = false)]
-        force_payload: bool,
-
-        #[arg(long = "payload-dir", value_name = "DIR")]
-        payload_dirs: Vec<PathBuf>,
 
         #[arg(long, default_value_t = false)]
         dry_run: bool,
@@ -169,6 +165,7 @@ enum ConfigAction {
     GetMirror,
     ResetMirror,
 }
+
 #[derive(Subcommand)]
 enum HistoryAction {
     List {
@@ -194,8 +191,101 @@ fn early_detect_language() -> Language {
     Language::detect_system()
 }
 
-fn localize_command(cmd: clap::Command) -> clap::Command {
-    cmd.about(t!("cli.app_about").to_string())
+const ARG_HELPS: &[(&str, &str)] = &[
+    ("serial", "cli.arg_serial"),
+    ("lang", "cli.arg_lang"),
+    ("transport", "cli.arg_transport"),
+    ("log_json", "cli.arg_log_json"),
+];
+
+const SUBCOMMAND_HELPS: &[(&str, &str)] = &[
+    ("check", "cli.check_about"),
+    ("catalog", "cli.catalog_about"),
+    ("pair", "cli.pair_about"),
+    ("run", "cli.run_about"),
+    ("clean", "cli.clean_about"),
+    ("manager", "cli.manager_about"),
+    ("config", "cli.config_about"),
+    ("history", "cli.history_about"),
+    ("stats", "cli.stats_about"),
+    ("diagnose", "cli.diagnose_about"),
+];
+
+const CATALOG_ARG_HELPS: &[(&str, &str)] = &[("catalog_url", "cli.arg_catalog_url")];
+
+const CATALOG_SUBCOMMAND_HELPS: &[(&str, &str)] = &[
+    ("list", "cli.catalog_list_about"),
+    ("show", "cli.catalog_show_about"),
+    ("set", "cli.catalog_set_about"),
+    ("reset", "cli.catalog_reset_about"),
+];
+
+const PAIR_ARG_HELPS: &[(&str, &str)] = &[
+    ("list", "cli.arg_pair_list"),
+    ("addr", "cli.arg_pair_addr"),
+    ("code", "cli.arg_pair_code"),
+];
+
+const RUN_ARG_HELPS: &[(&str, &str)] = &[
+    ("payload", "cli.arg_payload"),
+    ("catalog_url", "cli.arg_catalog_url"),
+    ("ksu", "cli.arg_ksu"),
+    ("skip_ksu", "cli.arg_skip_ksu"),
+    ("attempts", "cli.arg_attempts"),
+    ("delay", "cli.arg_delay"),
+    ("save_history", "cli.arg_save_history"),
+    ("reboot_first", "cli.arg_reboot_first"),
+    ("dry_run", "cli.arg_dry_run"),
+    ("manager_apk", "cli.arg_manager_apk"),
+    ("manager_version", "cli.arg_manager_version"),
+    ("mirror", "cli.arg_mirror"),
+    ("no_install_manager", "cli.arg_no_install_manager"),
+    ("timeout", "cli.arg_timeout"),
+    ("all_devices", "cli.arg_all_devices"),
+    ("soft_reboot", "cli.arg_soft_reboot"),
+];
+
+const MANAGER_SUBCOMMAND_HELPS: &[(&str, &str)] = &[
+    ("download", "cli.manager_download_about"),
+    ("list", "cli.manager_list_about"),
+    ("install", "cli.manager_install_about"),
+];
+
+const MANAGER_DOWNLOAD_ARG_HELPS: &[(&str, &str)] = &[
+    ("ksu", "cli.arg_ksu"),
+    ("version", "cli.arg_manager_version"),
+    ("mirror", "cli.arg_mirror"),
+];
+
+const CONFIG_SUBCOMMAND_HELPS: &[(&str, &str)] = &[
+    ("set-mirror", "cli.config_set_mirror_about"),
+    ("get-mirror", "cli.config_get_mirror_about"),
+    ("reset-mirror", "cli.config_reset_mirror_about"),
+];
+
+const HISTORY_SUBCOMMAND_HELPS: &[(&str, &str)] = &[
+    ("list", "cli.history_list_about"),
+    ("show", "cli.history_show_about"),
+    ("clear", "cli.history_clear_about"),
+];
+
+fn apply_args(mut cmd: clap::Command, args: &[(&str, &str)]) -> clap::Command {
+    for &(arg_name, help_key) in args {
+        cmd = cmd.mut_arg(arg_name, |a| a.help(t!(help_key).to_string()));
+    }
+    cmd
+}
+
+fn apply_subcommands(mut cmd: clap::Command, subcmds: &[(&str, &str)]) -> clap::Command {
+    for &(cmd_name, about_key) in subcmds {
+        cmd = cmd.mut_subcommand(cmd_name, |s| s.about(t!(about_key).to_string()));
+    }
+    cmd
+}
+
+fn localize_command(mut cmd: clap::Command) -> clap::Command {
+    cmd = cmd
+        .about(t!("cli.app_about").to_string())
         .long_about(t!("cli.app_long_about").to_string())
         .disable_help_flag(true)
         .arg(
@@ -215,137 +305,56 @@ fn localize_command(cmd: clap::Command) -> clap::Command {
                 .help(t!("cli.arg_version").to_string()),
         )
         .disable_help_subcommand(true)
-        .subcommand(clap::Command::new("help").about(t!("cli.help_subcmd").to_string()))
-        .mut_arg("serial", |a| a.help(t!("cli.arg_serial").to_string()))
-        .mut_arg("lang", |a| a.help(t!("cli.arg_lang").to_string()))
-        .mut_arg("transport", |a| a.help(t!("cli.arg_transport").to_string()))
-        .mut_arg("log_json", |a| a.help(t!("cli.arg_log_json").to_string()))
-        .mut_subcommand("check", |sc| sc.about(t!("cli.check_about").to_string()))
-        .mut_subcommand("catalog", |sc| {
-            sc.about(t!("cli.catalog_about").to_string())
-                .mut_arg("catalog_url", |a| {
-                    a.help(t!("cli.arg_catalog_url").to_string())
-                })
-                .mut_subcommand("list", |s| {
-                    s.about(t!("cli.catalog_list_about").to_string())
-                })
-                .mut_subcommand("show", |s| {
-                    s.about(t!("cli.catalog_show_about").to_string())
-                })
-                .mut_subcommand("set", |s| {
-                    s.about(t!("cli.catalog_set_about").to_string())
-                        .mut_arg("url", |a| a.help(t!("cli.arg_catalog_set_url").to_string()))
-                })
-                .mut_subcommand("reset", |s| {
-                    s.about(t!("cli.catalog_reset_about").to_string())
-                })
+        .subcommand(clap::Command::new("help").about(t!("cli.help_subcmd").to_string()));
+
+    cmd = apply_args(cmd, ARG_HELPS);
+    cmd = apply_subcommands(cmd, SUBCOMMAND_HELPS);
+
+    cmd = cmd.mut_subcommand("catalog", |sc| {
+        let sc = apply_args(sc, CATALOG_ARG_HELPS);
+        let sc = apply_subcommands(sc, CATALOG_SUBCOMMAND_HELPS);
+        sc.mut_subcommand("set", |s| {
+            apply_args(s, &[("url", "cli.arg_catalog_set_url")])
         })
-        .mut_subcommand("run", |sc| {
-            sc.about(t!("cli.run_about").to_string())
-                .mut_arg("payload", |a| a.help(t!("cli.arg_payload").to_string()))
-                .mut_arg("catalog_url", |a| {
-                    a.help(t!("cli.arg_catalog_url").to_string())
-                })
-                .mut_arg("ksu", |a| a.help(t!("cli.arg_ksu").to_string()))
-                .mut_arg("skip_ksu", |a| a.help(t!("cli.arg_skip_ksu").to_string()))
-                .mut_arg("attempts", |a| a.help(t!("cli.arg_attempts").to_string()))
-                .mut_arg("delay", |a| a.help(t!("cli.arg_delay").to_string()))
-                .mut_arg("save_history", |a| {
-                    a.help(t!("cli.arg_save_history").to_string())
-                })
-                .mut_arg("reboot_first", |a| {
-                    a.help(t!("cli.arg_reboot_first").to_string())
-                })
-                .mut_arg("force_payload", |a| {
-                    a.help(t!("cli.arg_force_payload").to_string())
-                })
-                .mut_arg("payload_dirs", |a| {
-                    a.help(t!("cli.arg_payload_dir").to_string())
-                })
-                .mut_arg("dry_run", |a| a.help(t!("cli.arg_dry_run").to_string()))
-                .mut_arg("manager_apk", |a| {
-                    a.help(t!("cli.arg_manager_apk").to_string())
-                })
-                .mut_arg("manager_version", |a| {
-                    a.help(t!("cli.arg_manager_version").to_string())
-                })
-                .mut_arg("mirror", |a| a.help(t!("cli.arg_mirror").to_string()))
-                .mut_arg("no_install_manager", |a| {
-                    a.help(t!("cli.arg_no_install_manager").to_string())
-                })
-                .mut_arg("timeout", |a| a.help(t!("cli.arg_timeout").to_string()))
-                .mut_arg("all_devices", |a| {
-                    a.help(t!("cli.arg_all_devices").to_string())
-                })
-                .mut_arg("soft_reboot", |a| {
-                    a.help(t!("cli.arg_soft_reboot").to_string())
-                })
+    });
+
+    cmd = cmd.mut_subcommand("pair", |sc| apply_args(sc, PAIR_ARG_HELPS));
+
+    cmd = cmd.mut_subcommand("run", |sc| apply_args(sc, RUN_ARG_HELPS));
+
+    cmd = cmd.mut_subcommand("manager", |sc| {
+        let sc = apply_subcommands(sc, MANAGER_SUBCOMMAND_HELPS);
+        sc.mut_subcommand("download", |s| apply_args(s, MANAGER_DOWNLOAD_ARG_HELPS))
+            .mut_subcommand("install", |s| apply_args(s, &[("ksu", "cli.arg_ksu")]))
+    });
+
+    cmd = cmd.mut_subcommand("config", |sc| {
+        apply_subcommands(sc, CONFIG_SUBCOMMAND_HELPS)
+    });
+
+    cmd = cmd.mut_subcommand("history", |sc| {
+        let sc = apply_subcommands(sc, HISTORY_SUBCOMMAND_HELPS);
+        sc.mut_subcommand("list", |s| {
+            apply_args(s, &[("limit", "cli.arg_history_limit")])
         })
-        .mut_subcommand("manager", |sc| {
-            sc.about(t!("cli.manager_about").to_string())
-                .mut_subcommand("download", |s| {
-                    s.about(t!("cli.manager_download_about").to_string())
-                        .mut_arg("ksu", |a| a.help(t!("cli.arg_ksu").to_string()))
-                        .mut_arg("version", |a| {
-                            a.help(t!("cli.arg_manager_version").to_string())
-                        })
-                        .mut_arg("mirror", |a| a.help(t!("cli.arg_mirror").to_string()))
-                })
-                .mut_subcommand("list", |s| {
-                    s.about(t!("cli.manager_list_about").to_string())
-                })
-                .mut_subcommand("install", |s| {
-                    s.about(t!("cli.manager_install_about").to_string())
-                        .mut_arg("ksu", |a| a.help(t!("cli.arg_ksu").to_string()))
-                })
-        })
-        .mut_subcommand("config", |sc| {
-            sc.about(t!("cli.config_about").to_string())
-                .mut_subcommand("set-mirror", |s| {
-                    s.about(t!("cli.config_set_mirror_about").to_string())
-                })
-                .mut_subcommand("get-mirror", |s| {
-                    s.about(t!("cli.config_get_mirror_about").to_string())
-                })
-                .mut_subcommand("reset-mirror", |s| {
-                    s.about(t!("cli.config_reset_mirror_about").to_string())
-                })
-        })
-        .mut_subcommand("clean", |sc| sc.about(t!("cli.clean_about").to_string()))
-        .mut_subcommand("history", |sc| {
-            sc.about(t!("cli.history_about").to_string())
-                .mut_subcommand("list", |s| {
-                    s.about(t!("cli.history_list_about").to_string())
-                        .mut_arg("limit", |a| a.help(t!("cli.arg_history_limit").to_string()))
-                })
-                .mut_subcommand("show", |s| {
-                    s.about(t!("cli.history_show_about").to_string())
-                        .mut_arg("id", |a| a.help(t!("cli.arg_history_id").to_string()))
-                })
-                .mut_subcommand("clear", |s| {
-                    s.about(t!("cli.history_clear_about").to_string())
-                })
-        })
-        .mut_subcommand("stats", |sc| {
-            sc.about(t!("cli.stats_about").to_string())
-                .mut_arg("limit", |a| a.help(t!("cli.arg_stats_limit").to_string()))
-        })
-        .mut_subcommand("diagnose", |sc| {
-            sc.about(t!("cli.diagnose_about").to_string())
-                .mut_arg("output", |a| {
-                    a.help(t!("cli.arg_diagnose_output").to_string())
-                })
-        })
-        .mut_subcommand("pair", |sc| {
-            sc.about(t!("cli.pair_about").to_string())
-                .mut_arg("list", |a| a.help(t!("cli.arg_pair_list").to_string()))
-                .mut_arg("addr", |a| a.help(t!("cli.arg_pair_addr").to_string()))
-                .mut_arg("code", |a| a.help(t!("cli.arg_pair_code").to_string()))
-        })
+        .mut_subcommand("show", |s| apply_args(s, &[("id", "cli.arg_history_id")]))
+    });
+
+    cmd = cmd.mut_subcommand("stats", |sc| {
+        apply_args(sc, &[("limit", "cli.arg_stats_limit")])
+    });
+
+    cmd = cmd.mut_subcommand("diagnose", |sc| {
+        apply_args(sc, &[("output", "cli.arg_diagnose_output")])
+    });
+
+    cmd
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> std::process::ExitCode {
+    ui::init_tracing();
+
     let initial_lang = early_detect_language();
     set_current_language(initial_lang);
     rust_i18n::set_locale(initial_lang.code());
@@ -356,7 +365,7 @@ async fn main() {
         Ok(c) => c,
         Err(e) => {
             let _ = e.print();
-            std::process::exit(1);
+            return std::process::ExitCode::from(1);
         }
     };
     if cli.log_json {
@@ -399,8 +408,6 @@ async fn main() {
             delay,
             save_history,
             reboot_first,
-            force_payload,
-            payload_dirs,
             dry_run,
             manager_apk,
             manager_version,
@@ -410,8 +417,8 @@ async fn main() {
             all_devices,
             soft_reboot,
         } => {
-            commands::run_exploit(
-                cli.serial,
+            commands::run_exploit(commands::RunArgs {
+                serial: cli.serial,
                 payload,
                 catalog_url,
                 ksu,
@@ -420,8 +427,6 @@ async fn main() {
                 delay,
                 save_history,
                 reboot_first,
-                force_payload,
-                payload_dirs,
                 dry_run,
                 manager_apk,
                 manager_version,
@@ -431,7 +436,7 @@ async fn main() {
                 transport_mode,
                 all_devices,
                 soft_reboot,
-            )
+            })
             .await
         }
         Commands::Manager { action } => match action {
@@ -464,7 +469,82 @@ async fn main() {
     };
 
     if let Err(err) = result {
-        eprintln!("{} {:#}", "[fail]".red().bold(), err);
-        std::process::exit(1);
+        if matches!(
+            err.downcast_ref::<rmv_core::RmvError>(),
+            Some(rmv_core::RmvError::Cancelled)
+        ) {
+            return std::process::ExitCode::from(130);
+        }
+        if let Some(rmv_err) = err.downcast_ref::<rmv_core::RmvError>() {
+            eprintln!("{} {}", "[fail]".red().bold(), rmv_err.localized());
+        } else {
+            eprintln!("{} {:#}", "[fail]".red().bold(), err);
+        }
+        return std::process::ExitCode::from(1);
+    }
+
+    std::process::ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_args_match(cmd: &clap::Command, args: &[(&str, &str)], ctx: &str) {
+        for &(arg_id, _) in args {
+            assert!(
+                cmd.get_arguments().any(|a| a.get_id() == arg_id),
+                "Argument '{}' not found in {}",
+                arg_id,
+                ctx
+            );
+        }
+    }
+
+    fn assert_subcommands_match(cmd: &clap::Command, subcmds: &[(&str, &str)], ctx: &str) {
+        for &(sub_name, _) in subcmds {
+            assert!(
+                cmd.get_subcommands().any(|s| s.get_name() == sub_name),
+                "Subcommand '{}' not found in {}",
+                sub_name,
+                ctx
+            );
+        }
+    }
+
+    #[test]
+    fn test_clap_arguments_table_match() {
+        let cmd = Cli::command();
+
+        assert_args_match(&cmd, ARG_HELPS, "root command");
+        assert_subcommands_match(&cmd, SUBCOMMAND_HELPS, "root command");
+
+        let catalog_cmd = cmd.find_subcommand("catalog").expect("catalog subcommand");
+        assert_args_match(catalog_cmd, CATALOG_ARG_HELPS, "catalog subcommand");
+        assert_subcommands_match(catalog_cmd, CATALOG_SUBCOMMAND_HELPS, "catalog subcommand");
+
+        let pair_cmd = cmd.find_subcommand("pair").expect("pair subcommand");
+        assert_args_match(pair_cmd, PAIR_ARG_HELPS, "pair subcommand");
+
+        let run_cmd = cmd.find_subcommand("run").expect("run subcommand");
+        assert_args_match(run_cmd, RUN_ARG_HELPS, "run subcommand");
+
+        let manager_cmd = cmd.find_subcommand("manager").expect("manager subcommand");
+        assert_subcommands_match(manager_cmd, MANAGER_SUBCOMMAND_HELPS, "manager subcommand");
+
+        let manager_download_cmd = manager_cmd
+            .find_subcommand("download")
+            .expect("manager download subcommand");
+        assert_args_match(
+            manager_download_cmd,
+            MANAGER_DOWNLOAD_ARG_HELPS,
+            "manager download subcommand",
+        );
+
+        let config_cmd = cmd.find_subcommand("config").expect("config subcommand");
+        assert_subcommands_match(config_cmd, CONFIG_SUBCOMMAND_HELPS, "config subcommand");
+
+        let history_cmd = cmd.find_subcommand("history").expect("history subcommand");
+        assert_subcommands_match(history_cmd, HISTORY_SUBCOMMAND_HELPS, "history subcommand");
     }
 }

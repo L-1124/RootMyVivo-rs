@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 #![cfg_attr(not(test), warn(clippy::print_stdout, clippy::print_stderr))]
 
@@ -14,7 +15,9 @@ pub mod i18n;
 pub mod ksu;
 pub mod manager;
 pub mod mirror;
+pub mod paths;
 pub mod persistence;
+pub mod quote;
 pub mod transport;
 
 pub use catalog::{
@@ -32,9 +35,13 @@ pub use i18n::{current_language, set_current_language, Language};
 pub use ksu::{KsuOrchestrator, KsuVariant};
 pub use manager::{get_static_asset, CachedManagerInfo, ManagerAssetInfo, ManagerDownloader};
 pub use mirror::{MirrorConfig, DEFAULT_GITHUB_MIRRORS};
+pub use paths::{
+    cache_dir, catalog_url_file, history_dir, manager_cache_dir, mirror_config_file, rmv_home_dir,
+};
 pub use persistence::{CleanOutcome, Persistence};
-pub use transport::Transport;
+pub use quote::sh_quote;
 pub use transport::{
     ADBServer, AdbCliTransport, AdbClientTransport, AdbMdnsDiscovery, AdbServiceKind,
     DiscoveredAdbService, TransportBuilder, TransportMode,
 };
+pub use transport::{ExecOutput, Transport, TransportExt};

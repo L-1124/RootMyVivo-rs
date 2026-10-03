@@ -52,3 +52,56 @@ pub fn current_language() -> Language {
         Language::En
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+    use std::collections::BTreeSet;
+
+    fn collect_keys(prefix: &str, value: &Value, keys: &mut BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                for (k, v) in map {
+                    let next_prefix = if prefix.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{prefix}.{k}")
+                    };
+                    collect_keys(&next_prefix, v, keys);
+                }
+            }
+            _ => {
+                keys.insert(prefix.to_string());
+            }
+        }
+    }
+
+    #[test]
+    fn test_i18n_keys_bidirectional_completeness() {
+        let en_str = include_str!("../locales/en.json");
+        let zh_str = include_str!("../locales/zh-CN.json");
+
+        let en_val: Value = serde_json::from_str(en_str).expect("Valid en.json");
+        let zh_val: Value = serde_json::from_str(zh_str).expect("Valid zh-CN.json");
+
+        let mut en_keys = BTreeSet::new();
+        let mut zh_keys = BTreeSet::new();
+
+        collect_keys("", &en_val, &mut en_keys);
+        collect_keys("", &zh_val, &mut zh_keys);
+
+        let missing_in_zh: Vec<_> = en_keys.difference(&zh_keys).cloned().collect();
+        let missing_in_en: Vec<_> = zh_keys.difference(&en_keys).cloned().collect();
+
+        assert!(
+            missing_in_zh.is_empty(),
+            "Keys present in en.json but missing in zh-CN.json: {:?}",
+            missing_in_zh
+        );
+        assert!(
+            missing_in_en.is_empty(),
+            "Keys present in zh-CN.json but missing in en.json: {:?}",
+            missing_in_en
+        );
+    }
+}

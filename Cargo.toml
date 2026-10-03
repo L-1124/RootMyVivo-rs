@@ -8,13 +8,13 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"
 authors = ["RootMyVivo-RS Contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/zenyxx-xd/RootMyVivo"
-
 [workspace.dependencies]
-tokio = { version = "1.43", features = ["full"] }
-reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1.43", features = ["fs", "io-util", "io-std", "macros", "net", "process", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "system-proxy"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
@@ -47,7 +47,13 @@ unimplemented = "deny"
 dbg_macro = "deny"
 undocumented_unsafe_blocks = "deny"
 
-unwrap_used = "warn"
-expect_used = "warn"
 disallowed_methods = "warn"
 disallowed_types = "warn"
+
+unwrap_used = "warn"
+expect_used = "warn"
+format_push_string = "warn"
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 1

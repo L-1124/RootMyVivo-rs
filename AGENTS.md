@@ -108,8 +108,8 @@ Terminal messages must use standardized, clean ASCII status prefixes without dec
 - `[info]`: Informational detail (cyan/dimmed)
 
 ### Error Handling
-- **Core Library (`rmv-core`)**: All errors use `rmv_core::RmvError`. Do not use `anyhow` inside `rmv-core`. Implement `Display` by mapping each variant to a `rust_i18n::t!` translation key.
-- **CLI Layer (`rmv-cli`)**: Handlers in `commands/mod.rs` return `anyhow::Result<()>`, wrapping core errors with `.context(...)`.
+- **Core Library (`rmv-core`)**: All errors use `rmv_core::RmvError` derived via `thiserror::Error`. Localized user-facing messages are provided via `.localized()` returning `rust_i18n::t!` translations.
+- **CLI Layer (`rmv-cli`)**: Handlers in `commands/` submodules return `anyhow::Result<()>`, wrapping core errors with `.context(...)`.
 
 ### Async & Trait Patterns
 - The `Transport` trait uses standard async trait bounds:
@@ -127,6 +127,6 @@ Terminal messages must use standardized, clean ASCII status prefixes without dec
 
 ## Testing & QA
 
-- **Unit Testing**: 16 unit tests reside in inline `#[cfg(test)] mod tests` blocks within `rmv-core` (`catalog.rs`, `device.rs`, `history.rs`, `ksu.rs`, `wifi/pairing.rs`).
+- **Unit & Regression Testing**: 36 tests reside in `rmv-core` (`catalog.rs`, `device.rs`, `history.rs`, `i18n.rs`, `ksu.rs`, `manager.rs`, `paths.rs`, `quote.rs`), `engine_test.rs` (paused-time regression tests via `MockTransport`), and `rmv-cli` (`main.rs`).
 - **Regression Gates**:
   - `cargo test --workspace` must pass with 0 failures before any pull request or commit.

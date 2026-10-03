@@ -11,6 +11,9 @@
   },
   "error": {
     "adb": "ADB communication failure: %{message}",
+    "adb_failed": "ADB %{action} failed: %{error}",
+    "adb_timeout": "ADB %{action} timed out after %{seconds}s",
+    "adb_cmd_failed": "ADB command %{action} failed: %{error}",
     "device_not_found": "No device detected. Please verify USB debugging is enabled and allowed for this computer.",
     "device_offline": "Device is offline or debugging is not allowed.",
     "invalid_url": "Invalid URL (must start with http:// or https://): %{url}",
@@ -86,6 +89,7 @@
     "manager_download_ok": "Manager APK downloaded successfully: %{name} -> %{path}",
     "manager_auto_download": "No local manager APK or installed package detected; auto-downloading %{name}...",
     "manager_installing": "Installing %{name} manager APK to device...",
+    "manager_unverified_hash": "Downloading unverified latest manager asset (%{version}); SHA-256 not pinned.",
     "manager_screen_locked": "Device screen is locked or sleeping. vivo / OriginOS automatically rejects installations while locked; please wake and unlock your screen.",
     "manager_install_prompt": "Pre-install prompt: If your device displays a security confirmation dialog, please tap Allow on the screen...",
     "manager_install_ok": "Manager %{name} installed successfully.",

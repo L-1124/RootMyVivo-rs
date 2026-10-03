@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Phase {
     DeviceCheck,
     Catalog,
@@ -35,6 +36,7 @@ pub enum LogLevel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EngineStatus {
     Idle,
     Running,
@@ -44,6 +46,7 @@ pub enum EngineStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EngineEvent {
     Step {
         phase: Phase,

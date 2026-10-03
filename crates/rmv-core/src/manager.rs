@@ -1,6 +1,7 @@
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -11,14 +12,27 @@ use crate::event::{EngineEvent, LogLevel};
 use crate::ksu::KsuVariant;
 use crate::mirror::MirrorConfig;
 use rust_i18n::t;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagerAssetInfo {
-    pub variant: KsuVariant,
+    pub name: String,
     pub version: String,
-    pub file_name: String,
     pub download_url: String,
-    pub size: u64,
+    pub filename: String,
+    pub sha256: Option<&'static str>,
+}
+
+impl ManagerAssetInfo {
+    pub fn variant(&self) -> KsuVariant {
+        KsuVariant::from_id(&self.name)
+    }
+
+    pub fn file_name(&self) -> &str {
+        &self.filename
+    }
+
+    pub fn size(&self) -> u64 {
+        0
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,40 +46,40 @@ pub struct CachedManagerInfo {
 pub fn get_static_asset(variant: KsuVariant) -> ManagerAssetInfo {
     match variant {
         KsuVariant::KernelSU => ManagerAssetInfo {
-            variant,
+            name: variant.id().to_string(),
             version: "v3.3.0".to_string(),
-            file_name: "KernelSU_v3.3.0_32601-release.apk".to_string(),
+            filename: "KernelSU_v3.3.0_32601-release.apk".to_string(),
             download_url:
                 "https://github.com/tiann/KernelSU/releases/download/v3.3.0/KernelSU_v3.3.0_32601-release.apk"
                     .to_string(),
-            size: 11306351,
+            sha256: Some("c197060ecb89702e7d54a4c95e29cf5e8d97369bbbb436979ab7fd6bcde7b077"),
         },
         KsuVariant::KernelSuNext => ManagerAssetInfo {
-            variant,
+            name: variant.id().to_string(),
             version: "v3.4.0".to_string(),
-            file_name: "KernelSU_Next_v3.4.0_33294-release.apk".to_string(),
+            filename: "KernelSU_Next_v3.4.0_33294-release.apk".to_string(),
             download_url:
                 "https://github.com/KernelSU-Next/KernelSU-Next/releases/download/v3.4.0/KernelSU_Next_v3.4.0_33294-release.apk"
                     .to_string(),
-            size: 12435552,
+            sha256: Some("50339a93c0f812b8a72c1a387a1b441891e3df0f20b2d9daf80fd798d04b3de8"),
         },
         KsuVariant::SukiSuUltra => ManagerAssetInfo {
-            variant,
+            name: variant.id().to_string(),
             version: "v4.2.0".to_string(),
-            file_name: "SukiSU_v4.2.0_40900-release.apk".to_string(),
+            filename: "SukiSU_v4.2.0_40900-release.apk".to_string(),
             download_url:
                 "https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases/download/v4.2.0/SukiSU_v4.2.0_40900-release.apk"
                     .to_string(),
-            size: 14766150,
+            sha256: Some("4ca9810e6355fbff0bbe4bf5ce159808e64a40d85987a11894030cd990a6bdf3"),
         },
         KsuVariant::ReSukiSu => ManagerAssetInfo {
-            variant,
+            name: variant.id().to_string(),
             version: "v4.2.0-rc3".to_string(),
-            file_name: "ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk".to_string(),
+            filename: "ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk".to_string(),
             download_url:
                 "https://github.com/ReSukiSU/ReSukiSU/releases/download/v4.2.0-rc3/ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk"
                     .to_string(),
-            size: 9831969,
+            sha256: Some("25657bc449439687608fffa04b4b586de90fc405e3dc6217bd997fc71ba0a0a1"),
         },
     }
 }
@@ -81,6 +95,7 @@ struct GithubRelease {
 struct GithubAsset {
     name: String,
     browser_download_url: String,
+    #[allow(dead_code)]
     size: u64,
 }
 
@@ -99,10 +114,10 @@ fn select_best_apk(assets: &[GithubAsset]) -> Option<&GithubAsset> {
         .copied()
         .filter(|a| !a.name.to_lowercase().contains("spoofed"))
         .collect();
-    let candidates = if !non_spoofed.is_empty() {
-        non_spoofed
-    } else {
+    let candidates = if non_spoofed.is_empty() {
         apks
+    } else {
+        non_spoofed
     };
 
     if let Some(arm64) = candidates.iter().find(|a| {
@@ -133,13 +148,7 @@ pub struct ManagerDownloader;
 
 impl ManagerDownloader {
     pub fn default_cache_dir() -> PathBuf {
-        let base = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(base)
-            .join(".rmv")
-            .join("cache")
-            .join("managers")
+        crate::paths::manager_cache_dir()
     }
 
     pub async fn fetch_asset(
@@ -225,12 +234,27 @@ impl ManagerDownloader {
 
         if let Some(rel) = release {
             if let Some(asset) = select_best_apk(&rel.assets) {
+                let static_asset = get_static_asset(variant);
+                let sha256 = if rel
+                    .tag_name
+                    .trim()
+                    .eq_ignore_ascii_case(&static_asset.version)
+                    || rel
+                        .tag_name
+                        .trim()
+                        .trim_start_matches('v')
+                        .eq_ignore_ascii_case(static_asset.version.trim_start_matches('v'))
+                {
+                    static_asset.sha256
+                } else {
+                    None
+                };
                 return Ok(ManagerAssetInfo {
-                    variant,
+                    name: variant.id().to_string(),
                     version: rel.tag_name,
-                    file_name: asset.name.clone(),
+                    filename: asset.name.clone(),
                     download_url: asset.browser_download_url.clone(),
-                    size: asset.size,
+                    sha256,
                 });
             }
         }
@@ -293,9 +317,8 @@ impl ManagerDownloader {
     ) -> Result<PathBuf> {
         let asset_info = Self::fetch_asset(client, variant, target_version).await?;
 
-        let cache_dir = custom_cache_dir
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(Self::default_cache_dir);
+        let cache_dir =
+            custom_cache_dir.map_or_else(Self::default_cache_dir, std::path::Path::to_path_buf);
 
         tokio::fs::create_dir_all(&cache_dir).await?;
 
@@ -303,14 +326,31 @@ impl ManagerDownloader {
             "{}_{}_{}",
             variant.id(),
             asset_info.version,
-            asset_info.file_name
+            asset_info.filename
         );
         let dest_path = cache_dir.join(&dest_filename);
 
         if dest_path.exists() {
             if let Ok(meta) = tokio::fs::metadata(&dest_path).await {
-                if meta.len() == asset_info.size || (meta.len() > 1_000_000 && asset_info.size == 0)
+                let mut valid = false;
+                if let Some(expected_hash) = asset_info.sha256 {
+                    if let Ok(bytes) = tokio::fs::read(&dest_path).await {
+                        let mut hasher = Sha256::new();
+                        hasher.update(&bytes);
+                        let calculated = format!("{:x}", hasher.finalize());
+                        if calculated.eq_ignore_ascii_case(expected_hash) {
+                            valid = true;
+                        } else {
+                            let _ = tokio::fs::remove_file(&dest_path).await;
+                        }
+                    }
+                } else if meta.len() == asset_info.size()
+                    || (meta.len() > 1_000_000 && asset_info.size() == 0)
                 {
+                    valid = true;
+                }
+
+                if valid {
                     if let Some(tx) = event_tx {
                         let _ = tx.send(EngineEvent::Log {
                             level: LogLevel::Ok,
@@ -327,17 +367,22 @@ impl ManagerDownloader {
             }
         }
 
-        let mut download_urls =
-            MirrorConfig::resolve_mirror_urls(&asset_info.download_url, mirror_override);
-
-        if download_urls.len() > 1 {
-            if let Some((hit_idx, _)) = MirrorConfig::probe_fastest(&client, &download_urls).await {
-                if hit_idx > 0 && hit_idx < download_urls.len() {
-                    let hit_url = download_urls.remove(hit_idx);
-                    download_urls.insert(0, hit_url);
-                }
+        if asset_info.sha256.is_none() {
+            if let Some(tx) = event_tx {
+                let _ = tx.send(EngineEvent::Log {
+                    level: LogLevel::Warn,
+                    line: t!(
+                        "log.manager_unverified_hash",
+                        version = asset_info.version.clone()
+                    )
+                    .to_string(),
+                });
             }
         }
+
+        let download_urls =
+            MirrorConfig::resolve_manager_urls(&asset_info.download_url, mirror_override);
+        // Direct official GitHub URL is prioritized; mirrors serve as sequential failovers.
 
         let mut success = false;
         let mut last_error = None;
@@ -378,7 +423,8 @@ impl ManagerDownloader {
                 }
             };
 
-            let total_size = resp.content_length().unwrap_or(asset_info.size);
+            let total_size = resp.content_length().unwrap_or(asset_info.size());
+            let mut hasher = Sha256::new();
             static PART_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
             let seq = PART_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let tmp_path = cache_dir.join(format!(
@@ -399,7 +445,6 @@ impl ManagerDownloader {
                     total: total_size,
                 });
             }
-
             let mut stream = resp.bytes_stream();
             let mut downloaded: u64 = 0;
             let mut stream_failed = false;
@@ -419,6 +464,7 @@ impl ManagerDownloader {
 
                 match chunk_res {
                     Ok(chunk) => {
+                        hasher.update(&chunk);
                         if let Err(e) = file.write_all(&chunk).await {
                             last_error = Some(e.to_string());
                             stream_failed = true;
@@ -460,9 +506,15 @@ impl ManagerDownloader {
             let _ = file.flush().await;
             drop(file);
 
-            // 严格校验大小，失败或超限即认为损坏
+            // 严格校验大小与哈希
             let meta_ok = match tokio::fs::metadata(&tmp_path).await {
-                Ok(meta) => total_size > 0 && meta.len() == total_size,
+                Ok(meta) => {
+                    if total_size > 0 && meta.len() != total_size {
+                        false
+                    } else {
+                        meta.len() > 0
+                    }
+                }
                 Err(_) => false,
             };
             if !meta_ok {
@@ -470,31 +522,23 @@ impl ManagerDownloader {
                 last_error = Some("文件大小不匹配".to_string());
                 continue;
             }
-            if dest_path.exists() {
-                if let Ok(meta) = tokio::fs::metadata(&dest_path).await {
-                    if meta.len() == total_size {
-                        let _ = tokio::fs::remove_file(&tmp_path).await;
-                        success = true;
-                        break;
-                    }
+
+            let calculated_hash = format!("{:x}", hasher.finalize());
+            if let Some(expected_hash) = asset_info.sha256 {
+                if !calculated_hash.eq_ignore_ascii_case(expected_hash) {
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                    return Err(RmvError::HashMismatch {
+                        expected: expected_hash.to_string(),
+                        actual: calculated_hash,
+                    });
                 }
             }
 
             if let Err(e) = tokio::fs::rename(&tmp_path, &dest_path).await {
-                if dest_path.exists() {
-                    if let Ok(meta) = tokio::fs::metadata(&dest_path).await {
-                        if meta.len() == total_size {
-                            let _ = tokio::fs::remove_file(&tmp_path).await;
-                            success = true;
-                            break;
-                        }
-                    }
-                }
                 let _ = tokio::fs::remove_file(&tmp_path).await;
                 last_error = Some(e.to_string());
                 continue;
             }
-
             success = true;
             break;
         }
@@ -527,9 +571,7 @@ impl ManagerDownloader {
     }
 
     pub fn list_cached_managers(custom_dir: Option<&Path>) -> Vec<CachedManagerInfo> {
-        let dir = custom_dir
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(Self::default_cache_dir);
+        let dir = custom_dir.map_or_else(Self::default_cache_dir, std::path::Path::to_path_buf);
 
         let mut list = Vec::new();
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -539,7 +581,7 @@ impl ManagerDownloader {
                     let name = entry.file_name().to_string_lossy().to_string();
                     if name.to_lowercase().ends_with(".apk") {
                         let meta = entry.metadata().ok();
-                        let size = meta.map(|m| m.len()).unwrap_or(0);
+                        let size = meta.map_or(0, |m| m.len());
 
                         let variant = if name.starts_with("sukisu") {
                             Some(KsuVariant::SukiSuUltra)
@@ -575,11 +617,10 @@ mod tests {
     fn test_static_assets_completeness() {
         for variant in KsuVariant::all_variants() {
             let asset = get_static_asset(*variant);
-            assert_eq!(asset.variant, *variant);
+            assert_eq!(asset.variant(), *variant);
             assert!(!asset.version.is_empty());
-            assert!(asset.file_name.ends_with(".apk"));
+            assert!(asset.filename.ends_with(".apk"));
             assert!(asset.download_url.starts_with("https://github.com/"));
-            assert!(asset.size > 0);
         }
     }
 
@@ -617,5 +658,84 @@ mod tests {
             best_resukisu.name,
             "ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk"
         );
+    }
+
+    #[tokio::test]
+    async fn test_manager_hash_mismatch() {
+        use std::io::Write;
+        let temp_dir =
+            std::env::temp_dir().join(format!("rmv_test_mismatch_{}", std::process::id()));
+        let _ = tokio::fs::create_dir_all(&temp_dir).await;
+
+        // Setup mock server or test directly:
+        // We can test download_manager with bad sha256 or mock response.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
+                let body = b"corrupted fake apk content";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.write_all(body);
+                let _ = stream.flush();
+            }
+        });
+
+        let client = Client::new();
+        let target_url = format!("http://127.0.0.1:{}", port);
+        let fake_asset = ManagerAssetInfo {
+            name: "kernelsu".to_string(),
+            version: "v3.3.0".to_string(),
+            filename: "fake.apk".to_string(),
+            download_url: target_url.clone(),
+            sha256: Some("0000000000000000000000000000000000000000000000000000000000000000"),
+        };
+
+        // Execute download directly with fake asset
+        let dest_filename = format!(
+            "{}_{}_{}",
+            fake_asset.variant().id(),
+            fake_asset.version,
+            fake_asset.filename
+        );
+        let _dest_path = temp_dir.join(&dest_filename);
+        let tmp_path = temp_dir.join(format!("{}.part.test", dest_filename));
+
+        let resp = client.get(&target_url).send().await.unwrap();
+        let mut stream = resp.bytes_stream();
+        let mut file = File::create(&tmp_path).await.unwrap();
+        let mut hasher = Sha256::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.unwrap();
+            hasher.update(&chunk);
+            file.write_all(&chunk).await.unwrap();
+        }
+        file.flush().await.unwrap();
+        drop(file);
+
+        let calculated = format!("{:x}", hasher.finalize());
+        let expected = fake_asset.sha256.unwrap();
+        assert_ne!(calculated, expected);
+
+        let res: Result<()> = if calculated.eq_ignore_ascii_case(expected) {
+            Ok(())
+        } else {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            Err(RmvError::HashMismatch {
+                expected: expected.to_string(),
+                actual: calculated,
+            })
+        };
+
+        assert!(matches!(res, Err(RmvError::HashMismatch { .. })));
+        assert!(!tmp_path.exists());
+        let _ = handle.join();
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
     }
 }

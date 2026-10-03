@@ -12,10 +12,7 @@ pub struct MirrorConfig;
 
 impl MirrorConfig {
     pub fn config_path() -> PathBuf {
-        let base = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(base).join(".rmv").join("github_mirror")
+        crate::paths::mirror_config_file()
     }
 
     pub fn get_saved_mirror() -> Option<String> {
@@ -99,6 +96,50 @@ impl MirrorConfig {
             }
             let mirrored = Self::apply_mirror(raw, &saved);
             return vec![mirrored, raw.to_string()];
+        }
+
+        let mut urls = Vec::with_capacity(DEFAULT_GITHUB_MIRRORS.len() + 1);
+        urls.push(raw.to_string());
+        for mirror in DEFAULT_GITHUB_MIRRORS {
+            urls.push(Self::apply_mirror(raw, mirror));
+        }
+        urls
+    }
+
+    pub fn resolve_manager_urls(raw_url: &str, cli_override: Option<&str>) -> Vec<String> {
+        let raw = raw_url.trim();
+
+        if let Some(cli_prefix) = cli_override {
+            let trimmed = cli_prefix.trim();
+            if trimmed.eq_ignore_ascii_case("direct")
+                || trimmed.eq_ignore_ascii_case("none")
+                || trimmed == "false"
+            {
+                return vec![raw.to_string()];
+            }
+            if !trimmed.is_empty() {
+                let mirrored = Self::apply_mirror(raw, trimmed);
+                return vec![raw.to_string(), mirrored];
+            }
+        }
+
+        if let Ok(env_mirror) = std::env::var("RMV_GITHUB_MIRROR") {
+            let trimmed = env_mirror.trim();
+            if trimmed.eq_ignore_ascii_case("direct") || trimmed.eq_ignore_ascii_case("none") {
+                return vec![raw.to_string()];
+            }
+            if !trimmed.is_empty() {
+                let mirrored = Self::apply_mirror(raw, trimmed);
+                return vec![raw.to_string(), mirrored];
+            }
+        }
+
+        if let Some(saved) = Self::get_saved_mirror() {
+            if saved.eq_ignore_ascii_case("direct") || saved.eq_ignore_ascii_case("none") {
+                return vec![raw.to_string()];
+            }
+            let mirrored = Self::apply_mirror(raw, &saved);
+            return vec![raw.to_string(), mirrored];
         }
 
         let mut urls = Vec::with_capacity(DEFAULT_GITHUB_MIRRORS.len() + 1);
@@ -194,6 +235,18 @@ mod tests {
 
         let direct_urls = MirrorConfig::resolve_mirror_urls(raw, Some("direct"));
         assert_eq!(direct_urls, vec![raw.to_string()]);
+    }
+
+    #[test]
+    fn test_resolve_manager_urls_prioritizes_direct() {
+        let raw = "https://github.com/tiann/KernelSU/releases/download/v3.3.0/test.apk";
+        let urls = MirrorConfig::resolve_manager_urls(raw, Some("https://gh-proxy.com"));
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[0], raw);
+        assert_eq!(
+            urls[1],
+            "https://gh-proxy.com/https://github.com/tiann/KernelSU/releases/download/v3.3.0/test.apk"
+        );
     }
 
     #[tokio::test]

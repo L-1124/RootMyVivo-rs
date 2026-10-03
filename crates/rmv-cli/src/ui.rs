@@ -2,10 +2,20 @@ use colored::*;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rmv_core::{EngineEvent, EngineStatus, LogLevel};
 use rust_i18n::t;
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
+use tokio::fs::File;
+use tokio::io::{AsyncWriteExt, BufWriter};
 
+/// Initialize tracing subscriber with EnvFilter directing logs to standard error.
+pub fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
 static GLOBAL_JSONL_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn init_global_jsonl(custom_path: Option<PathBuf>) -> &'static PathBuf {
@@ -13,8 +23,7 @@ pub fn init_global_jsonl(custom_path: Option<PathBuf>) -> &'static PathBuf {
         custom_path.unwrap_or_else(|| {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_secs());
             PathBuf::from(format!("rmv-events-{}.jsonl", ts))
         })
     })
@@ -24,6 +33,7 @@ pub struct CliUi {
     download_bar: Option<ProgressBar>,
     printed_log_lines: std::collections::HashSet<String>,
     jsonl_path: Option<PathBuf>,
+    json_writer: Option<BufWriter<File>>,
     tag_prefix: Option<String>,
     mp: Option<Arc<MultiProgress>>,
 }
@@ -42,6 +52,7 @@ impl CliUi {
             download_bar: None,
             printed_log_lines: std::collections::HashSet::new(),
             jsonl_path: GLOBAL_JSONL_PATH.get().cloned(),
+            json_writer: None,
             tag_prefix: None,
             mp: None,
         }
@@ -60,6 +71,7 @@ impl CliUi {
             download_bar: None,
             printed_log_lines: std::collections::HashSet::new(),
             jsonl_path: GLOBAL_JSONL_PATH.get().cloned(),
+            json_writer: None,
             tag_prefix: Some(tag_prefix),
             mp: Some(mp),
         }
@@ -68,23 +80,38 @@ impl CliUi {
     #[allow(dead_code)]
     pub fn with_jsonl(mut self, path: PathBuf) -> Self {
         self.jsonl_path = Some(path);
+        self.json_writer = None;
         self
     }
 
     #[allow(dead_code)]
     pub fn set_jsonl(&mut self, path: PathBuf) {
         self.jsonl_path = Some(path);
+        self.json_writer = None;
+    }
+    pub async fn flush(&mut self) {
+        if let Some(writer) = &mut self.json_writer {
+            let _ = writer.flush().await;
+        }
     }
 
-    pub fn handle_event(&mut self, event: EngineEvent) {
+    pub async fn handle_event(&mut self, event: EngineEvent) {
         if let Some(path) = &self.jsonl_path {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
+            if self.json_writer.is_none() {
+                if let Ok(file) = tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .await
+                {
+                    self.json_writer = Some(BufWriter::new(file));
+                }
+            }
+            if let Some(writer) = &mut self.json_writer {
                 if let Ok(json) = serde_json::to_string(&event) {
-                    let _ = writeln!(file, "{}", json);
+                    let _ = writer.write_all(json.as_bytes()).await;
+                    let _ = writer.write_all(b"\n").await;
+                    let _ = writer.flush().await;
                 }
             }
         }
@@ -270,6 +297,7 @@ impl CliUi {
                     }
                 }
             }
+            _ => {}
         }
     }
 }

@@ -17,6 +17,7 @@ pub struct DeviceInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum GateStatus {
     Vulnerable,
     Patched { version: String, reason: String },
@@ -24,6 +25,7 @@ pub enum GateStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum RootStatus {
     /// 设备未获得 root 权限
     NotRooted {
@@ -144,7 +146,7 @@ pub fn parse_root_probe(probe_output: &str) -> RootStatus {
     let has_done_sentinel = done_part.contains('1') || done_part.contains("RMV_DONE");
     let exploit_running = has_preload_mapped && !has_done_sentinel;
 
-    if (has_ksu_module && sys_su_ok) || sys_su_ok {
+    if sys_su_ok {
         RootStatus::KernelSu {
             su_path: "/system/bin/su".to_string(),
         }
@@ -173,8 +175,8 @@ pub fn parse_root_probe(probe_output: &str) -> RootStatus {
 }
 
 pub async fn check_root_status<T: Transport>(transport: &T) -> Result<RootStatus> {
-    let (_, output) = transport.exec(ROOT_PROBE_CMD).await?;
-    Ok(parse_root_probe(&output))
+    let out = transport.exec(ROOT_PROBE_CMD).await?;
+    Ok(parse_root_probe(&out.combined()))
 }
 
 impl DeviceInfo {
@@ -210,11 +212,7 @@ impl DeviceInfo {
                         version: ver_str,
                         reason: t!("gate.cve_patched_6_6").to_string(),
                     }
-                } else if self
-                    .gki_git_id
-                    .as_deref()
-                    .map_or(false, |g| g == "g24b70dd1cb81")
-                {
+                } else if self.gki_git_id.as_deref() == Some("g24b70dd1cb81") {
                     GateStatus::Patched {
                         version: ver_str,
                         reason: t!("gate.cve_patched_backport").to_string(),
