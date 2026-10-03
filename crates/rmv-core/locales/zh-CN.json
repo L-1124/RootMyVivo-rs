@@ -87,7 +87,11 @@
     "manager_installing": "正在向设备安装 %{name} 管理器 APK...",
     "manager_screen_locked": "检测到手机处于锁屏或息屏状态。vivo / OriginOS 在锁屏状态下会默认直接拒绝安装，请先点亮并解锁手机屏幕！",
     "manager_install_prompt": "安装前提示：若手机弹出应用安装安全验证或权限确认，请在手机屏幕上点击「允许」...",
-    "manager_install_ok": "管理器 %{name} 安装完成。"
+    "manager_install_ok": "管理器 %{name} 安装完成。",
+    "partial_success_temp_root": "临时 Root 提权成功 (UID=0)，KernelSU 动态加载已跳过。",
+    "partial_ksu_skipped": "因离线且无可用管理器 APK，未能完成 KernelSU 激活: %{error}",
+    "partial_su_hint": "当前临时 Root 环境保持有效，可通过 adb shell /data/local/tmp/rmv/su -c <命令> 执行操作。",
+    "partial_recovery_hint": "提示: 如需补全 KernelSU，可联网重试或通过 --manager-apk <路径> 指定本地 APK。"
   },
   "cli": {
     "app_about": "vivo / iQOO 设备免解锁临时提权与 KernelSU 工具",

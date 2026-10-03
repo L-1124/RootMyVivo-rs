@@ -7,6 +7,24 @@ use crate::error::Result;
 
 pub const MAX_HISTORY_RECORDS: usize = 50;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum RunStatus {
+    Pass,
+    Partial,
+    Fail,
+}
+
+impl RunStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pass => "PASS",
+            Self::Partial => "PARTIAL",
+            Self::Fail => "FAIL",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunRecord {
     pub id: String,
@@ -17,9 +35,23 @@ pub struct RunRecord {
     pub payload: String,
     pub ksu_variant: String,
     pub success: bool,
+    #[serde(default)]
+    pub status: Option<RunStatus>,
     pub message: String,
     #[serde(default)]
     pub logs: Vec<String>,
+}
+
+impl RunRecord {
+    pub fn resolved_status(&self) -> RunStatus {
+        if let Some(s) = self.status {
+            s
+        } else if self.success {
+            RunStatus::Pass
+        } else {
+            RunStatus::Fail
+        }
+    }
 }
 
 pub struct HistoryManager;
@@ -234,6 +266,7 @@ mod tests {
             payload: "preload.so".to_string(),
             ksu_variant: "sukisu".to_string(),
             success: true,
+            status: Some(RunStatus::Pass),
             message: "ok".to_string(),
             logs: vec!["line 1".to_string(), "line 2".to_string()],
         };

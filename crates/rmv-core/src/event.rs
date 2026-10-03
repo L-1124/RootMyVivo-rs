@@ -39,6 +39,7 @@ pub enum EngineStatus {
     Idle,
     Running,
     Success,
+    Partial,
     Failed,
 }
 
@@ -71,6 +72,8 @@ pub enum EngineEvent {
     Status(EngineStatus),
     Completed {
         success: bool,
+        #[serde(default)]
+        status: Option<EngineStatus>,
         message: String,
     },
 }

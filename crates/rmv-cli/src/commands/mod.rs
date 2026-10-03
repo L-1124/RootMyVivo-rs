@@ -796,10 +796,10 @@ pub async fn run_history_list(limit: usize) -> Result<()> {
     );
 
     for rec in records.iter().take(display_count) {
-        let status = if rec.success {
-            "PASS".green().bold()
-        } else {
-            "FAIL".red().bold()
+        let status = match rec.resolved_status() {
+            rmv_core::RunStatus::Pass => "PASS".green().bold(),
+            rmv_core::RunStatus::Partial => "PARTIAL".yellow().bold(),
+            rmv_core::RunStatus::Fail => "FAIL".red().bold(),
         };
 
         let short_payload = std::path::Path::new(&rec.payload)
@@ -850,10 +850,10 @@ pub async fn run_history_show(id: &str) -> Result<()> {
         rec.id.yellow().bold()
     );
     println!("  Timestamp  : {}", rec.timestamp);
-    let status_str = if rec.success {
-        "PASS".green().bold()
-    } else {
-        "FAIL".red().bold()
+    let status_str = match rec.resolved_status() {
+        rmv_core::RunStatus::Pass => "PASS".green().bold(),
+        rmv_core::RunStatus::Partial => "PARTIAL".yellow().bold(),
+        rmv_core::RunStatus::Fail => "FAIL".red().bold(),
     };
     println!("  Status     : {}", status_str);
     println!("  Device     : {} ({})", rec.device_model, rec.device_code);

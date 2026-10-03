@@ -201,14 +201,7 @@ impl CliUi {
                 }
             }
             EngineEvent::Status(status) => match status {
-                EngineStatus::Success => {
-                    self.spinner.finish_and_clear();
-                    if let Some(pb) = &self.download_bar {
-                        pb.finish_and_clear();
-                    }
-                    self.download_bar = None;
-                }
-                EngineStatus::Failed => {
+                EngineStatus::Success | EngineStatus::Partial | EngineStatus::Failed => {
                     self.spinner.finish_and_clear();
                     if let Some(pb) = &self.download_bar {
                         pb.finish_and_clear();
@@ -217,7 +210,11 @@ impl CliUi {
                 }
                 _ => {}
             },
-            EngineEvent::Completed { success, message } => {
+            EngineEvent::Completed {
+                success,
+                status,
+                message,
+            } => {
                 self.spinner.finish_and_clear();
                 if let Some(pb) = &self.download_bar {
                     pb.finish_and_clear();
@@ -228,25 +225,48 @@ impl CliUi {
                 } else {
                     message
                 };
+
+                let effective_status = status.unwrap_or(if success {
+                    EngineStatus::Success
+                } else {
+                    EngineStatus::Failed
+                });
+
                 if let Some(mp) = &self.mp {
-                    if success {
-                        let _ = mp.println(format!(
-                            "{} {}",
-                            "[ ok ]".green().bold(),
-                            final_msg.green().bold()
-                        ));
-                    } else {
-                        let _ = mp.println(format!(
-                            "{} {}",
-                            "[fail]".red().bold(),
-                            final_msg.red().bold()
-                        ));
+                    match effective_status {
+                        EngineStatus::Success => {
+                            let _ = mp.println(format!(
+                                "{} {}",
+                                "[ ok ]".green().bold(),
+                                final_msg.green().bold()
+                            ));
+                        }
+                        EngineStatus::Partial => {
+                            let _ = mp.println(format!(
+                                "{} {}",
+                                "[warn]".yellow().bold(),
+                                final_msg.yellow().bold()
+                            ));
+                        }
+                        _ => {
+                            let _ = mp.println(format!(
+                                "{} {}",
+                                "[fail]".red().bold(),
+                                final_msg.red().bold()
+                            ));
+                        }
                     }
                 } else {
-                    if success {
-                        println!("{} {}", "[ ok ]".green().bold(), final_msg.green().bold());
-                    } else {
-                        println!("{} {}", "[fail]".red().bold(), final_msg.red().bold());
+                    match effective_status {
+                        EngineStatus::Success => {
+                            println!("{} {}", "[ ok ]".green().bold(), final_msg.green().bold());
+                        }
+                        EngineStatus::Partial => {
+                            println!("{} {}", "[warn]".yellow().bold(), final_msg.yellow().bold());
+                        }
+                        _ => {
+                            println!("{} {}", "[fail]".red().bold(), final_msg.red().bold());
+                        }
                     }
                 }
             }

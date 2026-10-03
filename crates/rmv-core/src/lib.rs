@@ -24,7 +24,7 @@ pub use device::{
 pub use engine::{EngineOptions, ExploitEngine};
 pub use error::{Result, RmvError};
 pub use event::{EngineEvent, EngineStatus, LogLevel, Phase};
-pub use history::{HistoryManager, RunRecord};
+pub use history::{HistoryManager, RunRecord, RunStatus};
 pub use i18n::{current_language, set_current_language, Language};
 pub use ksu::{KsuOrchestrator, KsuVariant};
 pub use manager::{get_static_asset, CachedManagerInfo, ManagerAssetInfo, ManagerDownloader};

@@ -9,7 +9,7 @@ use crate::catalog::CatalogV5;
 use crate::device::{check_root_status, GateStatus};
 use crate::error::{Result, RmvError};
 use crate::event::{EngineEvent, EngineStatus, LogLevel, Phase};
-use crate::history::{HistoryManager, RunRecord};
+use crate::history::{HistoryManager, RunRecord, RunStatus};
 use crate::ksu::{KsuOrchestrator, KsuVariant};
 use crate::manager::ManagerDownloader;
 use crate::persistence::Persistence;
@@ -80,6 +80,20 @@ fn append_captured_log(captured: &mut Vec<String>, line: &str) {
     captured.push(line.to_string());
 }
 
+fn emit_log(
+    event_tx: &UnboundedSender<EngineEvent>,
+    captured: &mut Vec<String>,
+    level: LogLevel,
+    line: impl Into<String>,
+) {
+    let line_str = line.into();
+    append_captured_log(captured, &line_str);
+    let _ = event_tx.send(EngineEvent::Log {
+        level,
+        line: line_str,
+    });
+}
+
 impl ExploitEngine {
     pub fn new(work_dir: impl AsRef<Path>) -> Self {
         Self {
@@ -103,13 +117,14 @@ impl ExploitEngine {
             .await;
 
         if options.save_history && !options.dry_run {
-            let (model, code, kernel, payload_str, success, message) = match &res {
-                Ok((dev, p_path, msg)) => (
+            let (model, code, kernel, payload_str, success, status, message) = match &res {
+                Ok((dev, p_path, st, msg)) => (
                     dev.model.clone(),
                     dev.device.clone(),
                     dev.kernel_full.clone(),
                     p_path.display().to_string(),
                     true,
+                    Some(*st),
                     msg.clone(),
                 ),
                 Err(e) => {
@@ -128,6 +143,7 @@ impl ExploitEngine {
                             .map(|p| p.display().to_string())
                             .unwrap_or_else(|| "-".to_string()),
                         false,
+                        Some(RunStatus::Fail),
                         e.to_string(),
                     )
                 }
@@ -142,6 +158,7 @@ impl ExploitEngine {
                 payload: payload_str,
                 ksu_variant: options.ksu_variant.display_name().to_string(),
                 success,
+                status,
                 message,
                 logs: captured_logs,
             };
@@ -157,7 +174,7 @@ impl ExploitEngine {
         options: &EngineOptions,
         event_tx: &UnboundedSender<EngineEvent>,
         captured_logs: &mut Vec<String>,
-    ) -> Result<(crate::device::DeviceInfo, PathBuf, String)> {
+    ) -> Result<(crate::device::DeviceInfo, PathBuf, RunStatus, String)> {
         let total_steps = if options.skip_ksu { 4 } else { 5 };
         let _ = event_tx.send(EngineEvent::Status(EngineStatus::Running));
         // 步骤 1: 设备环境与门禁检测
@@ -316,14 +333,15 @@ impl ExploitEngine {
         };
 
         if options.dry_run {
-            let _ = event_tx.send(EngineEvent::Log {
-                level: LogLevel::Ok,
-                line: t!(
+            emit_log(
+                event_tx,
+                captured_logs,
+                LogLevel::Ok,
+                t!(
                     "log.dry_run_done",
                     path = payload_local_path.display().to_string()
-                )
-                .to_string(),
-            });
+                ),
+            );
             let _ = event_tx.send(EngineEvent::Status(EngineStatus::Success));
             let msg = t!(
                 "log.dry_run_complete_msg",
@@ -332,9 +350,10 @@ impl ExploitEngine {
             .to_string();
             let _ = event_tx.send(EngineEvent::Completed {
                 success: true,
+                status: Some(EngineStatus::Success),
                 message: msg.clone(),
             });
-            return Ok((device, payload_local_path, msg));
+            return Ok((device, payload_local_path, RunStatus::Pass, msg));
         }
 
         // 部署阶段
@@ -658,7 +677,7 @@ impl ExploitEngine {
                             )
                             .to_string(),
                         });
-                        let downloaded = ManagerDownloader::download_manager(
+                        let downloaded = match ManagerDownloader::download_manager(
                             &self.client,
                             options.ksu_variant,
                             options.manager_version.as_deref(),
@@ -666,8 +685,19 @@ impl ExploitEngine {
                             options.github_mirror.as_deref(),
                             Some(event_tx),
                         )
-                        .await?;
-                        host_apk = Some(downloaded);
+                        .await
+                        {
+                            Ok(path) => Some(path),
+                            Err(e) => {
+                                let _ = event_tx.send(EngineEvent::Log {
+                                    level: LogLevel::Warn,
+                                    line: t!("log.partial_ksu_skipped", error = e.to_string())
+                                        .to_string(),
+                                });
+                                None
+                            }
+                        };
+                        host_apk = downloaded;
                     }
                 }
 
@@ -759,33 +789,59 @@ impl ExploitEngine {
                     }
                 }
 
-                if let Err(e) = KsuOrchestrator::late_load(
+                let late_load_res = KsuOrchestrator::late_load(
                     transport,
                     options.ksu_variant,
                     None,
                     host_apk.as_deref(),
                 )
-                .await
-                {
-                    let _ = event_tx.send(EngineEvent::Log {
-                        level: LogLevel::Error,
-                        line: e.to_string(),
-                    });
+                .await;
+
+                if let Err(e) = late_load_res {
                     let _ = Persistence::prune_empty_data_adb(transport).await;
-                    return Err(e);
+                    let partial_msg = t!("log.partial_success_temp_root").to_string();
+                    emit_log(
+                        event_tx,
+                        captured_logs,
+                        LogLevel::Warn,
+                        t!("log.partial_ksu_skipped", error = e.to_string()),
+                    );
+                    emit_log(
+                        event_tx,
+                        captured_logs,
+                        LogLevel::Info,
+                        t!("log.partial_su_hint"),
+                    );
+                    emit_log(
+                        event_tx,
+                        captured_logs,
+                        LogLevel::Info,
+                        t!("log.partial_recovery_hint"),
+                    );
+                    let _ = event_tx.send(EngineEvent::Status(EngineStatus::Partial));
+                    let _ = event_tx.send(EngineEvent::Completed {
+                        success: true,
+                        status: Some(EngineStatus::Partial),
+                        message: partial_msg.clone(),
+                    });
+                    return Ok((device, payload_local_path, RunStatus::Partial, partial_msg));
                 }
-                let _ = event_tx.send(EngineEvent::Log {
-                    level: LogLevel::Ok,
-                    line: t!("log.ksu_ok", name = options.ksu_variant.display_name()).to_string(),
-                });
+                emit_log(
+                    event_tx,
+                    captured_logs,
+                    LogLevel::Ok,
+                    t!("log.ksu_ok", name = options.ksu_variant.display_name()),
+                );
             }
         }
 
         if options.soft_reboot {
-            let _ = event_tx.send(EngineEvent::Log {
-                level: LogLevel::Info,
-                line: t!("log.soft_reboot_pending").to_string(),
-            });
+            emit_log(
+                event_tx,
+                captured_logs,
+                LogLevel::Info,
+                t!("log.soft_reboot_pending"),
+            );
             let soft_reboot_cmd = "if [ -x /data/adb/ksu/bin/ksud ]; then /data/adb/ksu/bin/ksud soft-reboot; elif [ -x /data/local/tmp/rmv/ksud ]; then /data/local/tmp/rmv/ksud soft-reboot; else setprop ctl.restart zygote; fi";
             let _ = transport
                 .exec(&format!(
@@ -798,9 +854,10 @@ impl ExploitEngine {
             let _ = event_tx.send(EngineEvent::Status(EngineStatus::Success));
             let _ = event_tx.send(EngineEvent::Completed {
                 success: true,
+                status: Some(EngineStatus::Success),
                 message: success_msg.clone(),
             });
-            return Ok((device, payload_local_path, success_msg));
+            return Ok((device, payload_local_path, RunStatus::Pass, success_msg));
         }
         // 清理设备端临时痕迹
         let _ = Persistence::clean_traces(transport).await;
@@ -809,9 +866,10 @@ impl ExploitEngine {
         let _ = event_tx.send(EngineEvent::Status(EngineStatus::Success));
         let _ = event_tx.send(EngineEvent::Completed {
             success: true,
+            status: Some(EngineStatus::Success),
             message: success_msg.clone(),
         });
 
-        Ok((device, payload_local_path, success_msg))
+        Ok((device, payload_local_path, RunStatus::Pass, success_msg))
     }
 }
